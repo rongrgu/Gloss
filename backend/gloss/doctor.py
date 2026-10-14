@@ -13,7 +13,7 @@ from .config import Config, config_path
 from .providers.claude_cli import clean_env, find_claude
 
 STATIC_DIR = Path(__file__).parent / "static"
-PROMPTS = ["build-tree", "explain-slide", "qa-system", "qa-opening", "qa-rebuild"]
+PROMPTS = ["build-tree", "explain-slide", "qa-system", "qa-opening", "qa-rebuild", "align-transcript", "qa-retrieval"]
 
 
 @dataclass
@@ -50,6 +50,46 @@ def live_test(claude: str, cfg: Config) -> Check:
     return Check("ok", "test prompt", f"model {cfg.model} answered {str(out.get('result')).strip()[:40]!r}")
 
 
+def api_checks() -> list[Check]:
+    try:
+        import anthropic
+        sdk = Check("ok", "anthropic SDK", f"installed ({anthropic.__version__})")
+    except ImportError:
+        sdk = Check("fail", "anthropic SDK", "missing: pip install 'gloss[api]' (or uv sync --extra api)")
+    key = (Check("ok", "API key", "ANTHROPIC_API_KEY is set; calls are billed to it")
+           if os.environ.get("ANTHROPIC_API_KEY")
+           else Check("fail", "API key", "provider = \"anthropic_api\" needs ANTHROPIC_API_KEY"))
+    return [sdk, key]
+
+
+def cli_checks(cfg: Config, live: bool) -> list[Check]:
+    claude = cfg.claude_bin or find_claude()
+    if not claude:
+        return [Check("fail", "claude", "not found on PATH. Install Claude Code (https://claude.com/claude-code) "
+                                        "and run `claude` once to log in.")]
+    try:
+        ver = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        ver = f"(could not run: {e})"
+    checks = [Check("ok", "claude", f"{claude}  {ver}")]
+    st = auth_status(claude)
+    if st is None:
+        checks.append(Check("warn", "login", "could not read `claude auth status`; try `gloss doctor --live`"))
+    elif not st.get("loggedIn"):
+        checks.append(Check("fail", "login", "not logged in. Run `claude` and use /login (or `claude auth login`)."))
+    elif st.get("authMethod") != "claude.ai":
+        checks.append(Check("warn", "login", f"logged in via {st.get('authMethod')}, not a Claude subscription; "
+                                             "calls will be billed to that account"))
+    else:
+        sub = st.get("subscriptionType") or "subscription"
+        hint = f" Pro has a smaller quota; model \"{cfg.model}\" may use it up fast — consider \"sonnet\" or \"haiku\"." \
+            if sub == "pro" and "opus" in cfg.model.lower() else ""
+        checks.append(Check("ok", "login", f"claude.ai ({sub}).{hint}"))
+    if live:
+        checks.append(live_test(claude, cfg))
+    return checks
+
+
 def run_checks(cfg: Config | None = None, live: bool = False) -> list[Check]:
     checks: list[Check] = []
     v = sys.version_info
@@ -71,31 +111,11 @@ def run_checks(cfg: Config | None = None, live: bool = False) -> list[Check]:
                             "is set in your shell. Gloss removes it when calling claude so your subscription is used, "
                             "but other tools you run will bill that API key."))
 
-    claude = cfg.claude_bin or find_claude()
-    if not claude:
-        checks.append(Check("fail", "claude", "not found on PATH. Install Claude Code (https://claude.com/claude-code) "
-                                              "and run `claude` once to log in."))
+    if cfg.provider == "anthropic_api":
+        checks = [c for c in checks if c.name != "ANTHROPIC_API_KEY"]  # expected here, not a warning
+        checks += api_checks()
     else:
-        try:
-            ver = subprocess.run([claude, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
-        except (OSError, subprocess.SubprocessError) as e:
-            ver = f"(could not run: {e})"
-        checks.append(Check("ok", "claude", f"{claude}  {ver}"))
-        st = auth_status(claude)
-        if st is None:
-            checks.append(Check("warn", "login", "could not read `claude auth status`; try `gloss doctor --live`"))
-        elif not st.get("loggedIn"):
-            checks.append(Check("fail", "login", "not logged in. Run `claude` and use /login (or `claude auth login`)."))
-        elif st.get("authMethod") != "claude.ai":
-            checks.append(Check("warn", "login", f"logged in via {st.get('authMethod')}, not a Claude subscription; "
-                                                 "calls will be billed to that account"))
-        else:
-            sub = st.get("subscriptionType") or "subscription"
-            hint = f" Pro has a smaller quota; model \"{cfg.model}\" may use it up fast — consider \"sonnet\" or \"haiku\"." \
-                if sub == "pro" and "opus" in cfg.model.lower() else ""
-            checks.append(Check("ok", "login", f"claude.ai ({sub}).{hint}"))
-        if live:
-            checks.append(live_test(claude, cfg))
+        checks += cli_checks(cfg, live)
 
     missing = [p for p in PROMPTS if not (cfg.workspace / "prompts" / f"{p}.md").exists()]
     if not (cfg.workspace / "CLAUDE.md").exists() or missing:

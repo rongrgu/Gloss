@@ -25,6 +25,13 @@ class Reset:
 
 
 @dataclass
+class ToolUse:
+    """Claude called a tool (e.g. Read a page image, Grep the course). For progress display only."""
+    name: str
+    input: dict
+
+
+@dataclass
 class Done:
     text: str  # final answer
     session_id: str | None
@@ -33,7 +40,7 @@ class Done:
     data: Any = None  # parsed structured output when a json_schema was given
 
 
-Event = TextDelta | Reset | Done
+Event = TextDelta | Reset | ToolUse | Done
 
 
 class ProviderError(Exception):
@@ -53,9 +60,13 @@ class LLMProvider(Protocol):
         session: SessionRef | None = None,
         system: str | None = None,
         json_schema: dict | None = None,
+        cwd: Path | None = None,
+        tools: tuple[str, ...] = ("Read",),
     ) -> AsyncIterator[Event]:
         """Stream one turn. `system` only takes effect when the session is new (or session is None).
         With `json_schema`, the reply is validated against it and returned parsed in `Done.data`.
+        `cwd` is the folder the model may read (and search, with Grep/Glob in `tools`); it must be
+        inside the provider's workspace. Images must be inside it. Providers without tools ignore both.
 
         The last event is always `Done`; failures raise `ProviderError`.
         """

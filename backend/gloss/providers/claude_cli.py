@@ -10,15 +10,16 @@ import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from .base import Done, Event, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta
+from .base import Done, Event, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
 
-# Every call: only the Read tool exists, it is pre-approved, it cannot leave the
-# workspace (--restricted), and nothing can stop to ask for permission.
+# Every call: only read-only file tools exist (Read, plus Grep/Glob when asked), they are
+# pre-approved, they cannot leave the working folder (--restricted, verified for all three),
+# and nothing can stop to ask for permission.
 BASE_FLAGS = [
-    "-p", "--restricted",
-    "--tools", "Read", "--allowedTools", "Read", "--permission-prompts", "none",
+    "-p", "--restricted", "--permission-prompts", "none",
     "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 ]
+READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
 LINE_LIMIT = 64 * 1024 * 1024  # stream lines can carry base64 images from tool results
 
 
@@ -42,11 +43,13 @@ class ClaudeCLIProvider:
         self.timeout = timeout
 
     def build_args(self, *, session: SessionRef | None, system: str | None,
-                   json_schema: dict | None = None) -> list[str]:
+                   json_schema: dict | None = None, tools: tuple[str, ...] = ("Read",)) -> list[str]:
         bin_ = self.claude_bin or find_claude()
         if not bin_:
             raise ProviderError("claude CLI not found on PATH; install Claude Code and log in")
-        args = [bin_, *BASE_FLAGS]
+        if not tools or set(tools) - READ_ONLY_TOOLS:
+            raise ProviderError(f"only read-only tools are allowed, got {tools}")
+        args = [bin_, *BASE_FLAGS, "--tools", *tools, "--allowedTools", *tools]
         if self.model:
             args += ["--model", self.model]
         if session is None:
@@ -62,14 +65,21 @@ class ClaudeCLIProvider:
             args += ["--json-schema", json.dumps(json_schema)]
         return args
 
-    def build_prompt(self, prompt: str, images: list[Path]) -> str:
+    def resolve_cwd(self, cwd: Path | None) -> Path:
+        d = Path(cwd).resolve() if cwd else self.workspace
+        if not d.is_relative_to(self.workspace):
+            raise ProviderError(f"cwd outside workspace: {d}")
+        return d
+
+    def build_prompt(self, prompt: str, images: list[Path], cwd: Path | None = None) -> str:
         if not images:
             return prompt
+        root = self.resolve_cwd(cwd)
         paths = []
         for img in images:
             p = Path(img).resolve()
-            if not p.is_relative_to(self.workspace):
-                raise ProviderError(f"image outside workspace (Read cannot reach it): {p}")
+            if not p.is_relative_to(root):
+                raise ProviderError(f"image outside the working folder (Read cannot reach it): {p}")
             paths.append(str(p))
         return (
             prompt
@@ -87,11 +97,14 @@ class ClaudeCLIProvider:
         session: SessionRef | None = None,
         system: str | None = None,
         json_schema: dict | None = None,
+        cwd: Path | None = None,
+        tools: tuple[str, ...] = ("Read",),
     ) -> AsyncIterator[Event]:
-        args = self.build_args(session=session, system=system, json_schema=json_schema)
-        stdin = self.build_prompt(prompt, list(images)).encode()
+        args = self.build_args(session=session, system=system, json_schema=json_schema, tools=tuple(tools))
+        workdir = self.resolve_cwd(cwd)
+        stdin = self.build_prompt(prompt, list(images), workdir).encode()
         proc = await asyncio.create_subprocess_exec(
-            *args, cwd=self.workspace, env=clean_env(), limit=LINE_LIMIT,
+            *args, cwd=workdir, env=clean_env(), limit=LINE_LIMIT,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stderr_task = asyncio.create_task(proc.stderr.read())
@@ -129,6 +142,10 @@ class ClaudeCLIProvider:
                     elif e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "text_delta":
                         emitted = True
                         yield TextDelta(e["delta"]["text"])
+                elif kind == "assistant" and ev.get("parent_tool_use_id") is None:
+                    for block in ev.get("message", {}).get("content", []):
+                        if block.get("type") == "tool_use" and block.get("name") in READ_ONLY_TOOLS:
+                            yield ToolUse(block["name"], block.get("input") or {})
                 elif kind == "result":
                     result = ev
 

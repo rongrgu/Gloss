@@ -193,3 +193,15 @@ def test_concurrent_thread_creation_gets_unique_numbers(course):
         t.join()
     assert not errors
     assert sorted(t.n for t in course.list_threads(1)) == list(range(1, 41))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(rect=(0, 0, .5, .5), anchor_type="explanation_text", quote="x"),
+    dict(rect=None, anchor_type="explanation_text", quote="  "),
+    dict(rect=None, anchor_type="slide_region"),
+    dict(rect=None, anchor_type="explanation_text", quote="x" * 2001),
+    dict(rect=None, anchor_type="sticky_note", quote="x"),
+])
+def test_anchor_validation(course, kw):
+    with pytest.raises(ValueError):
+        course.create_thread(1, **kw)

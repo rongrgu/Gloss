@@ -3,6 +3,7 @@ import { api, followJob, type Course, type JobInfo } from './api'
 import { Brand, Icon } from './Icon'
 import { MindMap } from './MindMap'
 import { go, href } from './route'
+import { TranscriptBanner, TranscriptMenu, useTranscript } from './TranscriptMenu'
 
 type TreeState = { status: 'ready' | 'building' } | { status: 'error'; error: string }
 
@@ -13,6 +14,7 @@ type TreeState = { status: 'ready' | 'building' } | { status: 'error'; error: st
 export default function Overview({ course, onRefresh }: { course: Course; onRefresh: () => void }) {
   useEffect(onRefresh, [onRefresh])
   const [st, setSt] = useState<TreeState>({ status: course.tree ? 'ready' : 'building' })
+  const transcript = useTranscript(course, onRefresh)
 
   const follow = useCallback((job: JobInfo, signal?: AbortSignal) => {
     setSt({ status: 'building' })
@@ -52,6 +54,7 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
         <span className="file" title={course.path}>{course.title}</span>
         <span className="spacer" />
         <span className="saved wide-only">所有内容自动保存</span>
+        <TranscriptMenu course={course} t={transcript} />
         <a className="btn ghost" href={api.exportUrl(course.id)} download style={{ textDecoration: 'none' }}
           title="把思维导图、讲解、问答和笔记导出成一个 Markdown 文件">导出 Markdown</a>
         {hasTree && (
@@ -63,6 +66,7 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
         )}
       </header>
       <div className="intro">
+        <TranscriptBanner t={transcript} />
         {st.status === 'building' ? (
           <p className="warn">Claude 正在整理这节课的结构，生成后这里会变成思维导图。可以先点开任意一页。</p>
         ) : st.status === 'error' ? (

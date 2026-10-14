@@ -14,7 +14,9 @@ export interface Thread {
   id: string
   page: number
   n: number
-  rect: Rect
+  anchor_type: 'slide_region' | 'explanation_text'
+  rect: Rect | null // slide_region
+  quote: string | null // explanation_text
   minimized: boolean
   created_at: string
   messages: Message[]
@@ -22,7 +24,7 @@ export interface Thread {
 
 export interface JobInfo {
   id: string
-  kind: 'explain' | 'answer' | 'tree'
+  kind: 'explain' | 'answer' | 'tree' | 'align'
   status: 'queued' | 'running' | 'done' | 'error'
   page?: number
   thread_id?: string
@@ -55,6 +57,8 @@ export interface Course {
   aspect: number
   tree: Tree | null
   tree_job: JobInfo | null
+  transcript: { name: string; aligned_pages: number[] } | null
+  align_job: JobInfo | null
   question_counts: Record<string, number>
   pages_with_notes: number[]
 }
@@ -63,6 +67,7 @@ export interface SlideData {
   page: number
   text: string
   text_blocks: { x: number; y: number; w: number; h: number; text: string }[]
+  transcript_span: string | null
   explanation: Explanation | null
   explanation_job: JobInfo | null
   threads: Thread[]
@@ -82,7 +87,9 @@ export type JobEvent =
   | { type: 'start' }
   | { type: 'delta'; text: string }
   | { type: 'reset' }
-  | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree }
+  | { type: 'tool'; name: string; target: string } // 'page:7' | 'course' | 'search:<pattern>' | 'file' | 'files'
+  | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree;
+      aligned_pages?: number[] }
   | { type: 'error'; message: string }
 
 export class ApiError extends Error {
@@ -128,6 +135,13 @@ export const api = {
   course: (cid: string) => req<Course>('GET', c(cid)),
   buildTree: (cid: string, regenerate = false) =>
     req<{ tree?: Tree; job?: JobInfo }>('POST', `${c(cid)}/tree${regenerate ? '?regenerate=true' : ''}`),
+  uploadTranscript: (cid: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<{ job: JobInfo }>('POST', `${c(cid)}/transcript`, fd)
+  },
+  realignTranscript: (cid: string) => req<{ job: JobInfo }>('POST', `${c(cid)}/transcript/align`),
+  deleteTranscript: (cid: string) => req<{ ok: true }>('DELETE', `${c(cid)}/transcript`),
   slide: (cid: string, page: number) => req<SlideData>('GET', `${c(cid)}/slides/${page}`),
   exportUrl: (cid: string) => `${c(cid)}/export.md`,
   imageUrl: (cid: string, page: number) => `${c(cid)}/slides/${page}/image`,
@@ -135,8 +149,8 @@ export const api = {
   explain: (cid: string, page: number, regenerate = false) =>
     req<{ explanation?: Explanation; job?: JobInfo }>(
       'POST', `${c(cid)}/slides/${page}/explanation${regenerate ? '?regenerate=true' : ''}`),
-  ask: (cid: string, page: number, rect: Rect, question: string) =>
-    req<{ thread: Thread; job: JobInfo }>('POST', `${c(cid)}/slides/${page}/threads`, { rect, question }),
+  ask: (cid: string, page: number, anchor: { rect: Rect } | { quote: string }, question: string) =>
+    req<{ thread: Thread; job: JobInfo }>('POST', `${c(cid)}/slides/${page}/threads`, { ...anchor, question }),
   followUp: (cid: string, tid: string, text: string) =>
     req<{ message: Message; job: JobInfo }>('POST', `${c(cid)}/threads/${tid}/messages`, { text }),
   retry: (cid: string, tid: string) => req<{ job: JobInfo }>('POST', `${c(cid)}/threads/${tid}/retry`),

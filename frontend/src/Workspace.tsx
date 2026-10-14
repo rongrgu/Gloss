@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Course, type Message } from './api'
 import { Drawer } from './Drawer'
-import { ChatBox, Composer } from './Floats'
+import { ChatBox, Composer, elementAnchor, fixedAnchor, stageAnchor } from './Floats'
 import {
-  appendNote, clamp, DEFAULT_LAYOUT, fitWidth, gridFor, normalizeLayout, noteClip, SPLIT_MAX, SPLIT_MIN, type Layout,
+  appendNote, clamp, DEFAULT_LAYOUT, fitWidth, gridFor, normalizeLayout, noteClip, SPLIT_MAX, SPLIT_MIN, type Box,
+  type Layout,
 } from './geometry'
 import { Icon } from './Icon'
 import { LayoutMenu } from './LayoutMenu'
 import { Markdown } from './Markdown'
 import { go } from './route'
-import { Stage, type Sel } from './Stage'
+import { asSel, Stage, titleOf, type Sel } from './Stage'
 import { useToast } from './toast'
 import { useSlide, type ExplainState } from './useSlide'
 
@@ -34,6 +35,12 @@ export default function Workspace({ course, page, onCourseChanged }: {
   const [drawer, setDrawer] = useState(false)
   const [z, setZ] = useState<{ top: number; of: Record<string, number> }>({ top: 10, of: {} })
   const [tick, setTick] = useState(0)
+  const [showSpan, setShowSpan] = useState(false)
+  // Asking about a passage of the explanation: the current text selection, then the open composer.
+  const [textSel, setTextSel] = useState<{ quote: string; box: Box } | null>(null)
+  const [quoteAsk, setQuoteAsk] = useState<{ quote: string; box: Box } | null>(null)
+  const explainPane = useRef<HTMLElement>(null)
+  const explainBody = useRef<HTMLDivElement>(null)
   const [aspect, setAspect] = useState(16 / 9)
   const [stageW, setStageW] = useState<number>()
   const [toast, showToast] = useToast()
@@ -79,7 +86,22 @@ export default function Workspace({ course, page, onCourseChanged }: {
   useEffect(bump, [stageW, bump])
 
   // --- page change resets transient UI ---
-  useEffect(() => { setSel(null); setDragging(false) }, [page])
+  useEffect(() => { setSel(null); setDragging(false); setTextSel(null); setQuoteAsk(null) }, [page])
+  useEffect(() => {
+    const on = () => { const s = document.getSelection(); if (!s || s.isCollapsed) setTextSel(null) }
+    document.addEventListener('selectionchange', on)
+    return () => document.removeEventListener('selectionchange', on)
+  }, [])
+  const onExplainMouseUp = () => {
+    const s = document.getSelection()
+    if (!s || s.isCollapsed || !explainBody.current) return
+    const range = s.getRangeAt(0)
+    if (!explainBody.current.contains(range.commonAncestorContainer)) return
+    const quote = s.toString().replace(/\n{3,}/g, '\n\n').trim()
+    if (quote.length < 2) return
+    const r = range.getBoundingClientRect()
+    setTextSel({ quote: quote.slice(0, 2000), box: { left: r.left, top: r.top, width: r.width, height: r.height } })
+  }
 
   const goPage = useCallback((p: number) => {
     if (p >= 1 && p <= pageCount) go({ name: 'slide', cid, page: p })
@@ -95,11 +117,11 @@ export default function Workspace({ course, page, onCourseChanged }: {
       if (tag === 'input' || tag === 'textarea' || t.getAttribute?.('role') === 'separator') return
       if (e.key === 'ArrowLeft') goPage(page - 1)
       if (e.key === 'ArrowRight') goPage(page + 1)
-      if (e.key === 'Escape') { if (sel) setSel(null); else if (drawer) setDrawer(false) }
+      if (e.key === 'Escape') { if (sel) setSel(null); else if (quoteAsk) setQuoteAsk(null); else if (drawer) setDrawer(false) }
     }
     document.addEventListener('keydown', on)
     return () => document.removeEventListener('keydown', on)
-  }, [page, goPage, sel, drawer])
+  }, [page, goPage, sel, drawer, quoteAsk])
 
   const grid = gridFor(layout)
   const busy = useMemo(() => new Set(Object.entries(s.streams).filter(([, v]) => v.status !== 'error').map(([k]) => k)),
@@ -156,17 +178,41 @@ export default function Workspace({ course, page, onCourseChanged }: {
         <Splitter which="a" axis={grid.splitAAxis} hidden={!grid.showGroup} layout={layout} setLayout={setLayout}
           container={wsRef} label="调整 slide 和下方区域的大小" />
         <div className="group" ref={groupRef} style={grid.group} hidden={!grid.showGroup}>
-          <section className="pane panel" aria-label="讲解" hidden={!layout.showExplain}>
+          <section className="pane panel" aria-label="讲解" hidden={!layout.showExplain} ref={explainPane}>
             <div className="phead">
               <h2>讲解</h2>
-              <span className="meta">{s.explain.status === 'done' && s.explain.explanation.model
-                ? `由 ${s.explain.explanation.model} 生成 · 没有上传 transcript，讲解只基于 slide 内容`
-                : '没有上传 transcript，讲解只基于 slide 内容'}</span>
-              {s.explain.status === 'done' && (
-                <span className="acts"><button className="linkbtn" onClick={() => s.generate(true)}><Icon name="refresh" />重新生成</button></span>
+              <span className="meta">{[
+                s.explain.status === 'done' && s.explain.explanation.model ? `由 ${s.explain.explanation.model} 生成` : '',
+                !course.transcript ? '没有上传 transcript，讲解只基于 slide 内容'
+                  : s.slide?.transcript_span ? '这一页有对应的 transcript 段落' : 'transcript 里没有对应这一页的内容',
+              ].filter(Boolean).join(' · ')}</span>
+              <span className="acts">
+                {s.slide?.transcript_span && (
+                  <button className="linkbtn" aria-pressed={showSpan} onClick={() => setShowSpan(!showSpan)}>
+                    {showSpan ? '收起 transcript' : 'transcript 片段'}</button>
+                )}
+                {s.explain.status === 'done' && (
+                  <button className="linkbtn" onClick={() => s.generate(true)}><Icon name="refresh" />重新生成</button>
+                )}
+              </span>
+            </div>
+            <div className="pbody">
+              {showSpan && s.slide?.transcript_span && <div className="span">{s.slide.transcript_span}</div>}
+              <div className="explain-body" ref={explainBody} onMouseUp={onExplainMouseUp}>
+                <ExplainBody st={s.explain} onGenerate={() => s.generate()} />
+              </div>
+              {s.threads.some((t) => t.quote) && (
+                <div className="qchips" aria-label="关于讲解的提问">
+                  {s.threads.filter((t) => t.quote).map((t) => (
+                    <button key={t.id} className="qchip" title={titleOf(t)}
+                      onClick={() => { s.setMinimized(t.id, !t.minimized); front(t.id) }}>
+                      <span className={'pin' + (busy.has(t.id) ? ' busy' : '')}>{t.n}</span>
+                      <span className="qchip-t">{titleOf(t)}</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
-            <div className="pbody"><div className="explain-body"><ExplainBody st={s.explain} onGenerate={() => s.generate()} /></div></div>
           </section>
           <Splitter which="b" axis={grid.splitBAxis} hidden={!grid.showSplitB} layout={layout} setLayout={setLayout}
             container={groupRef} label="调整讲解和笔记的大小" />
@@ -182,17 +228,35 @@ export default function Workspace({ course, page, onCourseChanged }: {
       <div id="floats">
         {s.threads.filter((t) => !t.minimized).map((t) => (
           <ChatBox key={t.id} cid={cid} thread={t} stream={s.streams[t.id]} queuedBehind={answeringN}
-            stage={stageRef} tick={tick} z={z.of[t.id] ?? 11} onFront={() => front(t.id)}
+            anchor={t.rect ? stageAnchor(stageRef, asSel(t)) : elementAnchor(explainPane)}
+            tick={tick} z={z.of[t.id] ?? 11} onFront={() => front(t.id)}
             onMinimize={() => s.setMinimized(t.id, true)}
             onDelete={() => s.remove(t.id).catch((e) => showToast(String(e.message ?? e)))}
             onFollowUp={(text) => s.followUp(t.id, text)} onRetry={() => s.retry(t.id)} onClip={(m) => clip(t.id, m)} />
         ))}
         {sel && !dragging && (
-          <Composer key={`${sel.x},${sel.y}`} stage={stageRef} sel={sel} tick={tick} z={z.top + 1}
+          <Composer key={`${sel.x},${sel.y}`} anchor={stageAnchor(stageRef, sel)} tick={tick} z={z.top + 1}
             onCancel={() => setSel(null)}
             onSubmit={async (q) => {
-              const t = await s.ask([sel.x, sel.y, sel.w, sel.h].map((v) => +v.toFixed(4)) as [number, number, number, number], q)
+              const rect = [sel.x, sel.y, sel.w, sel.h].map((v) => +v.toFixed(4)) as [number, number, number, number]
+              const t = await s.ask({ rect }, q)
               setSel(null)
+              front(t.id)
+            }} />
+        )}
+        {textSel && !quoteAsk && (
+          <button className="btn primary askbtn" style={{ left: textSel.box.left + textSel.box.width / 2, top: textSel.box.top + textSel.box.height + 8 }}
+            onMouseDown={(e) => e.preventDefault() /* keep the selection */}
+            onClick={() => { setQuoteAsk(textSel); setTextSel(null); document.getSelection()?.removeAllRanges() }}>
+            就这段提问
+          </button>
+        )}
+        {quoteAsk && (
+          <Composer key={quoteAsk.quote} anchor={fixedAnchor(quoteAsk.box)} quote={quoteAsk.quote} tick={tick} z={z.top + 1}
+            onCancel={() => setQuoteAsk(null)}
+            onSubmit={async (q) => {
+              const t = await s.ask({ quote: quoteAsk.quote }, q)
+              setQuoteAsk(null)
               front(t.id)
             }} />
         )}

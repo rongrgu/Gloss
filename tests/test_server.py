@@ -224,3 +224,40 @@ def test_health_reports_login(env, monkeypatch):
     monkeypatch.setattr(server, "auth_status", lambda _: {"loggedIn": False})
     h = client.get("/api/health").json()
     assert h["claude_found"] is True and h["logged_in"] is False
+
+
+def test_transcript_upload_align_delete(env):
+    client, provider, _ = env
+    c = import_deck(client)
+    provider.structured = [{"slides": [{"page": 2, "first": 0, "last": 0}]}]
+    r = client.post(f"/api/courses/{c['id']}/transcript",
+                    files={"file": ("lec7.vtt", b"WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello attention\n", "text/vtt")})
+    assert sse(client, r.json()["job"]["id"])[-1]["aligned_pages"] == [2]
+    summary = client.get(f"/api/courses/{c['id']}").json()
+    assert summary["transcript"] == {"name": "lec7.vtt", "aligned_pages": [2]} and summary["align_job"] is None
+    assert client.get(f"/api/courses/{c['id']}/slides/2").json()["transcript_span"] == "[0:01] hello attention"
+    assert client.delete(f"/api/courses/{c['id']}/transcript").json() == {"ok": True}
+    summary = client.get(f"/api/courses/{c['id']}").json()
+    assert summary["transcript"] is None
+    assert client.get(f"/api/courses/{c['id']}/slides/2").json()["transcript_span"] is None
+    assert client.post(f"/api/courses/{c['id']}/transcript/align").status_code == 404
+
+
+def test_transcript_rejects_empty(env):
+    client, _, _ = env
+    c = import_deck(client)
+    r = client.post(f"/api/courses/{c['id']}/transcript", files={"file": ("x.txt", b"  \n\n ", "text/plain")})
+    assert r.status_code == 422
+
+
+def test_ask_about_explanation_text(env):
+    client, provider, _ = env
+    cid = import_deck(client)["id"]
+    r = client.post(f"/api/courses/{cid}/slides/2/threads", json={"quote": "缩放点积", "question": "什么意思？"}).json()
+    assert r["thread"]["anchor_type"] == "explanation_text"
+    assert r["thread"]["rect"] is None and r["thread"]["quote"] == "缩放点积"
+    sse(client, r["job"]["id"])
+    assert client.get(f"/api/courses/{cid}/threads/{r['thread']['id']}/crop").status_code == 404
+    url = f"/api/courses/{cid}/slides/2/threads"
+    assert client.post(url, json={"question": "q"}).status_code == 422
+    assert client.post(url, json={"rect": [0, 0, .5, .5], "quote": "x", "question": "q"}).status_code == 422

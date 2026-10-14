@@ -28,7 +28,10 @@ from .jobs import JobManager
 from .providers import LLMProvider
 from .providers.claude_cli import ClaudeCLIProvider, find_claude
 from .store import Course, Message, Thread
+from .transcript import decode, segment
 from .tutor import Tutor
+
+TRANSCRIPT_MAX_BYTES = 5 * 1024 * 1024
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
 STATIC_DIR = Path(__file__).parent / "static"  # frontend build output (npm run build in frontend/)
@@ -108,7 +111,8 @@ class OpenBody(BaseModel):
 
 
 class AskBody(BaseModel):
-    rect: tuple[float, float, float, float]
+    rect: tuple[float, float, float, float] | None = None  # a region of the slide…
+    quote: str | None = None  # …or a passage of the explanation
     question: str = Field(min_length=1)
 
 
@@ -136,8 +140,16 @@ def slide_aspect(c: Course) -> float:
 
 
 def course_summary(c: Course, jobs: JobManager | None = None) -> dict[str, Any]:
+    def active(kind: str) -> dict | None:
+        j = jobs.get(f"{c.id}:{kind}") if jobs else None
+        return j.to_dict() if j and not j.finished else None
+
     tree_job = jobs.get(f"{c.id}:tree") if jobs else None
+    has_transcript = c.get_asset(Tutor.TRANSCRIPT_ASSET) is not None
     return {
+        "transcript": {"name": c.get_meta("transcript_name") or "transcript",
+                       "aligned_pages": c.transcript_pages()} if has_transcript else None,
+        "align_job": active("align"),
         "id": c.id, "title": c.title, "path": str(c.path), "slide_count": c.slide_count(),
         "aspect": round(slide_aspect(c), 4),
         "tree": c.get_tree(), "tree_job": tree_job.to_dict() if tree_job and not tree_job.finished else None,
@@ -147,7 +159,8 @@ def course_summary(c: Course, jobs: JobManager | None = None) -> dict[str, Any]:
 
 def thread_dict(t: Thread, messages: list[Message] | None = None) -> dict[str, Any]:
     d = {"id": t.id, "page": t.page, "n": t.n, "anchor_type": t.anchor_type,
-         "rect": [t.x, t.y, t.w, t.h], "minimized": t.minimized, "created_at": t.created_at}
+         "rect": list(t.rect) if t.rect else None, "quote": t.quote,
+         "minimized": t.minimized, "created_at": t.created_at}
     if messages is not None:
         d["messages"] = [message_dict(m) for m in messages]
     return d
@@ -159,16 +172,25 @@ def message_dict(m: Message) -> dict[str, Any]:
 
 # --- app ---------------------------------------------------------------------------------
 
+def make_provider(config: Config) -> LLMProvider:
+    if config.provider == "claude_cli":
+        return ClaudeCLIProvider(config.workspace, model=config.model, claude_bin=config.claude_bin,
+                                 timeout=config.timeout)
+    if config.provider == "anthropic_api":
+        from .providers.anthropic_api import AnthropicAPIProvider
+        return AnthropicAPIProvider(config.model, timeout=config.timeout)
+    raise ValueError(f"unknown provider {config.provider!r} (claude_cli | anthropic_api)")
+
+
 def create_app(config: Config | None = None, provider: LLMProvider | None = None,
                static_dir: Path = STATIC_DIR) -> FastAPI:
     # Endpoints that touch `jobs` are `async def` so they run on the event loop
     # (JobManager is not thread-safe and starts asyncio tasks).
     config = config or Config.load()
     if provider is None:
-        provider = ClaudeCLIProvider(config.workspace, model=config.model, claude_bin=config.claude_bin,
-                                     timeout=config.timeout)
+        provider = make_provider(config)
     jobs = JobManager(config.concurrency)
-    tutor = Tutor(provider, jobs, config.workspace, language=config.language)
+    tutor = Tutor(provider, jobs, config.workspace, language=config.language, retrieval=config.qa_retrieval)
     library = Library(config.library, app_dir() / "recent.json")
 
     @asynccontextmanager
@@ -254,6 +276,36 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         return Response(export_markdown(c), media_type="text/markdown; charset=utf-8",
                         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
+    @app.post("/api/courses/{cid}/transcript")
+    async def upload_transcript(cid: str, file: UploadFile = File(...)):
+        c = library.get(cid)
+        data = await file.read()
+        if len(data) > TRANSCRIPT_MAX_BYTES:
+            raise HTTPException(413, "transcript too large (max 5 MB)")
+        if not segment(decode(data)):
+            raise HTTPException(422, "transcript is empty")
+        c.put_asset(Tutor.TRANSCRIPT_ASSET, "text/plain", data)
+        c.set_meta("transcript_name", file.filename or "transcript")
+        c.set_transcript_spans({})
+        return {"job": tutor.align_transcript(c).to_dict()}
+
+    @app.post("/api/courses/{cid}/transcript/align")
+    async def realign_transcript(cid: str):
+        c = library.get(cid)
+        try:
+            return {"job": tutor.align_transcript(c).to_dict()}
+        except KeyError as e:
+            raise HTTPException(404, "no transcript uploaded") from e
+
+    @app.delete("/api/courses/{cid}/transcript")
+    async def delete_transcript(cid: str):
+        c = library.get(cid)
+        if jobs.get(f"{cid}:align") and not jobs.get(f"{cid}:align").finished:
+            raise HTTPException(409, "alignment in progress")
+        c.delete_asset(Tutor.TRANSCRIPT_ASSET)
+        c.set_transcript_spans({})
+        return {"ok": True}
+
     @app.post("/api/courses/{cid}/tree")
     async def build_tree(cid: str, regenerate: bool = False):
         c = library.get(cid)
@@ -276,7 +328,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         e = c.latest_explanation(page)
         explain_job = jobs.get(f"{cid}:explain:{page}")
         return {
-            "page": page, "text": s.text, "text_blocks": s.text_blocks,
+            "page": page, "text": s.text, "text_blocks": s.text_blocks, "transcript_span": s.transcript_span,
             "explanation": {"content": e.content, "model": e.model, "created_at": e.created_at} if e else None,
             "explanation_job": explain_job.to_dict() if explain_job and not explain_job.finished else None,
             "threads": [thread_dict(t, c.list_messages(t.id)) for t in c.list_threads(page)],
@@ -321,7 +373,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         c = library.get(cid)
         slide_or_404(c, page)
         try:
-            t, m, job = tutor.ask(c, page, body.rect, body.question)
+            t, m, job = tutor.ask(c, page, body.rect, body.question, quote=body.quote)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         return {"thread": thread_dict(t, [m]), "job": job.to_dict()}

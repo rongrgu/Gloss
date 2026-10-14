@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from pathlib import Path
@@ -10,8 +11,9 @@ from typing import Any
 import pymupdf
 
 from .jobs import Job, JobManager
-from .providers import Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta
+from .providers import Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
 from .store import Course, Message, Thread
+from . import transcript as tr
 
 NONE = "（无）"
 TREE_SCHEMA = {
@@ -65,6 +67,8 @@ class Prompts:
 
 
 def thread_tag(thread: Thread, new: bool) -> str:
+    if new and thread.anchor_type == "explanation_text":
+        return f"[Thread #{thread.n} · 讲解中选中的一段 · 新问题]"
     if new:
         r = f"x={thread.x:.2f} y={thread.y:.2f} w={thread.w:.2f} h={thread.h:.2f}"
         return f"[Thread #{thread.n} · 选区 {r} · 新问题]"
@@ -120,14 +124,36 @@ class Scratch:
     def crop(self, thread: Thread) -> Path | None:
         return self._write(f"crop-{thread.id}.png", thread.crop) if thread.crop else None
 
+    def materials(self) -> None:
+        """Whole-course materials for retrieval: course.md (all slide text + transcript) and every page image.
+        course.md is rewritten only when its content changes (e.g. after a transcript is aligned)."""
+        parts = [f"# 《{self.course.title}》全部课件内容\n"]
+        for p, text in self.course.slide_texts():
+            parts.append(f"## 第 {p} 页\n\n{text.strip() or '（这一页没有可抽取的文字）'}\n")
+            span = self.course.get_slide(p).transcript_span
+            if span:
+                parts.append(f"### 第 {p} 页 · 老师讲这一页时说的话\n\n{span}\n")
+        content = "\n".join(parts).encode()
+        md = self.dir / "course.md"
+        if not md.exists() or hashlib.sha256(md.read_bytes()).digest() != hashlib.sha256(content).digest():
+            self.dir.mkdir(parents=True, exist_ok=True)
+            tmp = md.with_suffix(".tmp")
+            tmp.write_bytes(content)
+            tmp.replace(md)
+        for p in range(1, self.course.slide_count() + 1):
+            self.slide(p)
+
 
 class Tutor:
-    def __init__(self, provider: LLMProvider, jobs: JobManager, workspace: Path, language: str = "中文"):
+    def __init__(self, provider: LLMProvider, jobs: JobManager, workspace: Path, language: str = "中文",
+                 retrieval: bool = True):
         self.provider = provider
         self.jobs = jobs
         self.workspace = Path(workspace)
         self.prompts = Prompts(workspace)
         self.language = language
+        # Q&A may Grep/Read the whole course (§8, M6) — only with a provider that has tools.
+        self.retrieval = retrieval and getattr(provider, "supports_tools", True)
 
     # --- explanations (§5.4) ----------------------------------------------
 
@@ -151,8 +177,9 @@ class Tutor:
                 transcript=course.get_slide(page).transcript_span,
                 language=self.language,
             )
-            done = await self._stream(job, prompt, [Scratch(self.workspace, course).slide(page)],
-                                      session=None, system=self.prompts.role())
+            scratch = Scratch(self.workspace, course)
+            done = await self._stream(job, prompt, [scratch.slide(page)], session=None, system=self.prompts.role(),
+                                      cwd=scratch.dir)
             e = course.add_explanation(page, done.text, done.model)
             job.emit({"type": "done", "explanation": {"page": page, "content": e.content, "model": e.model,
                                                       "created_at": e.created_at}})
@@ -177,7 +204,7 @@ class Tutor:
             for attempt in range(2):
                 prompt = self.prompts.render("build-tree", **values, feedback=feedback)
                 done = await self._stream(job, prompt, [], session=None, system=self.prompts.role(),
-                                          json_schema=TREE_SCHEMA)
+                                          json_schema=TREE_SCHEMA, cwd=self._dir(course))
                 problems = tree_problems(done.data, n)
                 if not problems:
                     break
@@ -188,6 +215,42 @@ class Tutor:
             job.emit({"type": "done", "tree": tree})
 
         return self.jobs.submit(f"{course.id}:tree", "tree", None, run)
+
+    # --- transcript alignment (§5.3) ----------------------------------------
+
+    TRANSCRIPT_ASSET = "transcript"
+
+    def align_transcript(self, course: Course) -> Job:
+        """(Re)align the stored transcript to the slides. Replaces all transcript spans."""
+        asset = course.get_asset(self.TRANSCRIPT_ASSET)
+        if asset is None:
+            raise KeyError("no transcript uploaded")
+        n = course.slide_count()
+        text = tr.decode(asset[1])
+        segs = tr.segment(text, tr.target_for(text, n))
+        if not segs:
+            raise ValueError("transcript is empty")
+
+        async def run(job: Job) -> None:
+            slides = "\n\n".join(f"### 第 {p} 页\n{(t.strip()[:SLIDE_TEXT_LIMIT] or '（这一页没有可抽取的文字）')}"
+                                  for p, t in course.slide_texts())
+            values = dict(course_title=course.title, page_count=n, slides=slides,
+                          last_segment=len(segs) - 1, segments=tr.for_prompt(segs))
+            feedback = ""
+            for _ in range(2):
+                prompt = self.prompts.render("align-transcript", **values, feedback=feedback)
+                done = await self._stream(job, prompt, [], session=None, system=self.prompts.role(),
+                                          json_schema=tr.ALIGN_SCHEMA, cwd=self._dir(course))
+                problems = tr.alignment_problems(done.data, n, len(segs))
+                if not problems:
+                    break
+                job.emit({"type": "reset"})
+                feedback = "## 上一次的结果有问题，请修正\n\n" + "\n".join(f"- {p}" for p in problems)
+            spans = tr.repair_alignment(done.data, n, len(segs))
+            course.set_transcript_spans({p: tr.span_text(segs, a, b) for p, (a, b) in spans.items()})
+            job.emit({"type": "done", "aligned_pages": sorted(spans), "segments": len(segs)})
+
+        return self.jobs.submit(f"{course.id}:align", "align", None, run)
 
     def _outline(self, course: Course) -> str:
         tree = course.get_tree()
@@ -202,15 +265,21 @@ class Tutor:
 
     # --- Q&A (§7) -----------------------------------------------------------
 
-    def ask(self, course: Course, page: int, rect: tuple[float, float, float, float],
-            question: str) -> tuple[Thread, Message, Job]:
+    def ask(self, course: Course, page: int, rect: tuple[float, float, float, float] | None,
+            question: str, quote: str | None = None) -> tuple[Thread, Message, Job]:
+        """New question on a slide region (`rect`) or on a passage of the explanation (`quote`)."""
         question = question.strip()
         if not question:
             raise ValueError("empty question")
         image = course.get_slide_image(page)
         if image is None:
             raise KeyError(f"no slide {page}")
-        thread = course.create_thread(page, rect, crop=crop_png(image, rect))
+        if (rect is None) == (quote is None):
+            raise ValueError("give either rect or quote")
+        if quote is not None:
+            thread = course.create_thread(page, None, anchor_type="explanation_text", quote=quote)
+        else:
+            thread = course.create_thread(page, rect, crop=crop_png(image, rect))
         msg = course.add_message(thread.id, "user", question)
         return thread, msg, self._submit_answer(course, thread, msg)
 
@@ -239,6 +308,9 @@ class Tutor:
 
         async def run(job: Job) -> None:
             scratch = Scratch(self.workspace, course)
+            if self.retrieval:
+                scratch.materials()
+            qa = dict(cwd=scratch.dir, tools=("Read", "Grep", "Glob") if self.retrieval else ("Read",))
             first_ids = _first_user_message_ids(course, page)
             is_new = msg.id in first_ids
             current = self._tagged(course, thread, msg, is_new)
@@ -248,7 +320,7 @@ class Tutor:
             sid = course.get_session(page)
             if sid:
                 try:
-                    done = await self._stream(job, current, current_images, SessionRef(sid, new=False), None)
+                    done = await self._stream(job, current, current_images, SessionRef(sid, new=False), None, **qa)
                 except SessionNotFound:
                     job.emit({"type": "reset"})  # rebuild below
             if done is None:
@@ -260,7 +332,9 @@ class Tutor:
                     prompt += "\n\n"
                 prompt += current
                 system = self.prompts.role() + "\n\n" + self.prompts.render("qa-system", language=self.language)
-                done = await self._stream(job, prompt, [scratch.slide(page), *current_images], ref, system)
+                if self.retrieval:
+                    system += "\n\n" + self.prompts.render("qa-retrieval", page_count=course.slide_count())
+                done = await self._stream(job, prompt, [scratch.slide(page), *current_images], ref, system, **qa)
                 done.session_id = done.session_id or ref.id
 
             course.set_session(page, done.session_id)
@@ -274,7 +348,9 @@ class Tutor:
 
     def _tagged(self, course: Course, thread: Thread, msg: Message, is_new: bool) -> str:
         parts = [thread_tag(thread, is_new)]
-        if is_new:
+        if is_new and thread.anchor_type == "explanation_text":
+            parts.append("选中的讲解文字：\n" + "\n".join(f"> {line}" for line in thread.quote.splitlines() if line.strip()))
+        elif is_new:
             covered = covered_text(course.get_slide(thread.page).text_blocks, (thread.x, thread.y, thread.w, thread.h))
             if covered:
                 parts.append("选区覆盖的文字：\n" + "\n".join(f"> {t}" for t in covered))
@@ -289,6 +365,7 @@ class Tutor:
             page=page,
             page_count=course.slide_count(),
             text=_text(course, page),
+            transcript=course.get_slide(page).transcript_span,
             explanation=e.content if e else "",
         )
 
@@ -315,17 +392,38 @@ class Tutor:
 
     # --- streaming ----------------------------------------------------------
 
+    def _dir(self, course: Course) -> Path:
+        d = Scratch(self.workspace, course).dir
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     async def _stream(self, job: Job, prompt: str, images: list[Path], session: SessionRef | None,
-                      system: str | None, json_schema: dict | None = None) -> Done:
-        kw = {"json_schema": json_schema} if json_schema is not None else {}
+                      system: str | None, json_schema: dict | None = None, cwd: Path | None = None,
+                      tools: tuple[str, ...] = ("Read",)) -> Done:
+        kw: dict[str, Any] = {"cwd": cwd, "tools": tools}
+        if json_schema is not None:
+            kw["json_schema"] = json_schema
         async for ev in self.provider.run(prompt, images=images, session=session, system=system, **kw):
-            if isinstance(ev, TextDelta):
+            if isinstance(ev, ToolUse):
+                job.emit({"type": "tool", "name": ev.name, "target": tool_target(ev.name, ev.input)})
+            elif isinstance(ev, TextDelta):
                 job.emit({"type": "delta", "text": ev.text})
             elif isinstance(ev, Reset):
                 job.emit({"type": "reset"})
             elif isinstance(ev, Done):
                 return ev
         raise ProviderError("provider ended without a result")
+
+
+def tool_target(name: str, inp: dict) -> str:
+    """Short machine-readable description of a tool call for the UI: 'page:7', 'course', 'search:<pattern>'."""
+    if name == "Read":
+        base = Path(str(inp.get("file_path", ""))).name
+        m = re.fullmatch(r"page-(\d+)\.png", base)
+        return f"page:{m.group(1)}" if m else ("course" if base == "course.md" else "file")
+    if name == "Grep":
+        return f"search:{str(inp.get('pattern', ''))[:60]}"
+    return "files"
 
 
 def tree_problems(data: Any, n: int) -> list[str]:

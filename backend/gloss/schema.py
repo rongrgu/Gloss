@@ -48,7 +48,13 @@ def _v0_to_v1(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1]
+def _v1_to_v2(conn: sqlite3.Connection) -> None:
+    # M6: questions anchored to selected explanation text (anchor_type 'explanation_text').
+    # x/y/w/h are NULL for those; `quote` is the selected text.
+    conn.execute("ALTER TABLE threads ADD COLUMN quote TEXT")
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1, _v1_to_v2]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

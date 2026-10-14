@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gloss.providers import Done, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta
+from gloss.providers import Done, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
 from gloss.providers.claude_cli import ClaudeCLIProvider
 
 FAKE = Path(__file__).parent / "fake_claude.py"
@@ -75,7 +75,8 @@ def test_no_session_is_not_persisted(cli, monkeypatch):
 
 def test_tool_use_emits_reset_and_final_text(cli, monkeypatch):
     evs = run(cli, "tooluse", monkeypatch)
-    assert evs == [TextDelta("Let me look."), Reset(), TextDelta("Final "), TextDelta("answer"),
+    assert evs == [TextDelta("Let me look."), ToolUse("Read", {"file_path": "/x/page-7.png"}), Reset(),
+                   TextDelta("Final "), TextDelta("answer"),
                    Done("Final answer", "ephemeral-session", "claude-fake-1", 0.01)]
 
 
@@ -119,8 +120,44 @@ def test_images_listed_with_absolute_paths(cli, monkeypatch):
 def test_image_outside_workspace_refused(cli, monkeypatch, tmp_path):
     outside = tmp_path / "x.png"
     outside.write_bytes(b"png")
-    with pytest.raises(ProviderError, match="outside workspace"):
+    with pytest.raises(ProviderError, match="outside the working folder"):
         run(cli, "ok", monkeypatch, images=[outside])
+
+
+def test_cwd_and_tools(cli, monkeypatch):
+    course = cli.workspace / "courses" / "c1"
+    course.mkdir(parents=True)
+    img = course / "page-1.png"
+    img.write_bytes(b"png")
+    run(cli, "ok", monkeypatch, images=[img], cwd=course, tools=("Read", "Grep", "Glob"))
+    call = cli.calls()[0]
+    a = call["args"]
+    assert Path(call["cwd"]).resolve() == course.resolve()
+    assert a[a.index("--tools") + 1:a.index("--tools") + 4] == ["Read", "Grep", "Glob"]
+    assert a[a.index("--allowedTools") + 1:a.index("--allowedTools") + 4] == ["Read", "Grep", "Glob"]
+    # Default: workspace root, Read only.
+    run(cli, "ok", monkeypatch)
+    a = cli.calls()[1]["args"]
+    assert Path(cli.calls()[1]["cwd"]).resolve() == cli.workspace and a[a.index("--tools") + 2] == "--allowedTools"
+
+
+def test_image_must_be_inside_cwd(cli, monkeypatch):
+    (cli.workspace / "courses" / "a").mkdir(parents=True)
+    other = cli.workspace / "courses" / "b" / "page-1.png"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(b"png")
+    with pytest.raises(ProviderError, match="outside the working folder"):
+        run(cli, "ok", monkeypatch, images=[other], cwd=cli.workspace / "courses" / "a")
+
+
+@pytest.mark.parametrize("kw, msg", [
+    (dict(cwd=Path("/tmp")), "cwd outside workspace"),
+    (dict(tools=("Read", "Bash")), "read-only"),
+    (dict(tools=()), "read-only"),
+])
+def test_unsafe_options_refused(cli, monkeypatch, kw, msg):
+    with pytest.raises(ProviderError, match=msg):
+        run(cli, "ok", monkeypatch, **kw)
 
 
 def test_claude_not_found(tmp_path, monkeypatch):

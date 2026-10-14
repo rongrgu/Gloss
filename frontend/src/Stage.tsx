@@ -10,7 +10,7 @@ export interface Sel {
 }
 
 const pct = (r: Sel) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` })
-export const asSel = (t: Thread): Sel => ({ x: t.rect[0], y: t.rect[1], w: t.rect[2], h: t.rect[3] })
+export const asSel = (t: Thread): Sel => ({ x: t.rect![0], y: t.rect![1], w: t.rect![2], h: t.rect![3] })
 export const titleOf = (t: Thread) => t.messages.find((m) => m.role === 'user')?.content ?? '新问题'
 
 interface Props {
@@ -61,7 +61,7 @@ export const Stage = forwardRef<HTMLDivElement, Props>(function Stage(
       <img src={src} alt={alt}
         onLoad={(e) => onImageLoad(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)} />
       <div className="overlay" ref={overlay} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-        {threads.map((t) => {
+        {threads.filter((t) => t.rect).map((t) => {
           const pin = <span className={'pin' + (busy.has(t.id) ? ' busy' : '')}>{t.n}</span>
           return t.minimized ? (
             <button key={t.id} className="marker" style={pct(asSel(t))} title={titleOf(t)}
