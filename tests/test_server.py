@@ -171,3 +171,23 @@ def test_local_only_guard(env):
     assert client.post("/api/courses/open", json={"path": "/x"},
                        headers={"origin": "https://evil.example"}).status_code == 403
     assert client.get("/api/health", headers={"origin": "http://localhost:5173"}).status_code == 200
+
+
+def test_serves_frontend_build(tmp_path, monkeypatch):
+    monkeypatch.setenv("GLOSS_HOME", str(tmp_path / "home"))
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html>gloss</html>")
+    (static / "assets" / "a.js").write_text("x")
+    cfg = Config(workspace=tmp_path / "ws", library=tmp_path / "lib")
+    with TestClient(create_app(cfg, FakeProvider(), static_dir=static)) as client:
+        assert client.get("/").text == "<html>gloss</html>"
+        assert client.get("/assets/a.js").text == "x"
+        assert client.get("/api/health").status_code == 200  # API still wins
+
+
+def test_no_frontend_build_is_fine(tmp_path, monkeypatch):
+    monkeypatch.setenv("GLOSS_HOME", str(tmp_path / "home"))
+    cfg = Config(workspace=tmp_path / "ws", library=tmp_path / "lib")
+    with TestClient(create_app(cfg, FakeProvider(), static_dir=tmp_path / "nope")) as client:
+        assert client.get("/").status_code == 404

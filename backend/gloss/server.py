@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import schema
@@ -26,6 +27,7 @@ from .store import Course, Message, Thread
 from .tutor import Tutor
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
+STATIC_DIR = Path(__file__).parent / "static"  # frontend build output (npm run build in frontend/)
 
 
 # --- open courses & recent list ------------------------------------------------
@@ -141,7 +143,8 @@ def message_dict(m: Message) -> dict[str, Any]:
 
 # --- app ---------------------------------------------------------------------------------
 
-def create_app(config: Config | None = None, provider: LLMProvider | None = None) -> FastAPI:
+def create_app(config: Config | None = None, provider: LLMProvider | None = None,
+               static_dir: Path = STATIC_DIR) -> FastAPI:
     # Endpoints that touch `jobs` are `async def` so they run on the event loop
     # (JobManager is not thread-safe and starts asyncio tasks).
     config = config or Config.load()
@@ -358,5 +361,9 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # The frontend uses hash routes, so serving index.html at / is all it needs.
+    if (static_dir / "index.html").exists():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
     return app
