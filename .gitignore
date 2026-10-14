@@ -38,3 +38,8 @@ Thumbs.db
 # --- Env ---
 .env
 .env.*
+
+# --- Local only: design notes and Claude Code dev instructions ---
+# (root only: claude_workspace/CLAUDE.md is the runtime tutor role and must stay tracked)
+/docs/
+/CLAUDE.md
