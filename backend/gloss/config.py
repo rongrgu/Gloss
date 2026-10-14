@@ -59,7 +59,7 @@ def seed_workspace(src: Path, dst: Path) -> None:
 
 @dataclass
 class Config:
-    provider: str = "claude_cli"  # claude_cli | anthropic_api (M6)
+    provider: str = "claude_cli"  # claude_cli (your Claude login) | anthropic_api (ANTHROPIC_API_KEY, `gloss[api]`)
     model: str = "sonnet"
     concurrency: int = 2  # global cap on simultaneous LLM calls
     language: str = "中文"  # explanation / answer language
@@ -67,6 +67,7 @@ class Config:
     library: Path = field(default_factory=lambda: Path.home() / "Gloss")  # where new .gloss files go
     claude_bin: str | None = None  # default: found on PATH
     timeout: float = 600  # seconds per call
+    qa_retrieval: bool = True  # answers may search the whole course (Grep/Read in the course folder)
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

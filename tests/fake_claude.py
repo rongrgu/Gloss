@@ -13,7 +13,7 @@ import time
 args = sys.argv[1:]
 stdin = sys.stdin.read()
 with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
-    f.write(json.dumps({"args": args, "stdin": stdin, "has_api_key": "ANTHROPIC_API_KEY" in os.environ}) + "\n")
+    f.write(json.dumps({"args": args, "stdin": stdin, "has_api_key": "ANTHROPIC_API_KEY" in os.environ, "cwd": os.getcwd()}) + "\n")
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 sid = args[args.index("--session-id") + 1] if "--session-id" in args else (
@@ -56,6 +56,8 @@ if mode in ("ok", "missing"):
     result("Hello")
 elif mode == "tooluse":
     message("Let me look.")
+    out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "/x/page-7.png"}}]}})
     # subagent-ish noise that must be ignored
     out({"type": "stream_event", "parent_tool_use_id": "toolu_1",
          "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "IGNORED"}}})

@@ -45,10 +45,10 @@ def test_prompts_render_and_strip_comment(setup):
     _, ws = setup
     p = Prompts(ws)
     assert not p.role().startswith("<!--")
-    out = p.render("qa-opening", course_title="T", page=2, page_count=3, text="", explanation="E")
+    out = p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript=None, explanation="E")
     assert "第 2 / 3 页" in out and "（无）" in out and "{{" not in out
     with pytest.raises(KeyError, match="explanation"):
-        p.render("qa-opening", course_title="T", page=2, page_count=3, text="")
+        p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript="")
 
 
 def test_explanation_generated_once(setup):
@@ -222,3 +222,97 @@ def test_crop_png_size():
     img = pymupdf.open().new_page(width=400, height=200).get_pixmap().tobytes("png")
     c = pymupdf.Pixmap(crop_png(img, (0.25, 0.5, 0.5, 0.5)))
     assert (c.width, c.height) == (200, 100)
+
+
+def test_question_on_explanation_text(setup):
+    fp = FakeProvider(reply="A")
+
+    async def steps(tutor, course):
+        course.add_explanation(2, "第一段。\n\n除以根号 d 是为了让方差回到 1。")
+        t1, _, j = tutor.ask(course, 2, None, "为什么是 1？", quote="让方差回到 1")
+        await finish(j)
+        _, j = tutor.follow_up(course, t1.id, "再说说")
+        await finish(j)
+        with pytest.raises(ValueError):
+            tutor.ask(course, 2, (0, 0, .5, .5), "q", quote="x")
+        with pytest.raises(ValueError):
+            tutor.ask(course, 2, None, "q")
+        return t1
+
+    t1 = run_tutor(setup, fp, steps)
+    assert t1.anchor_type == "explanation_text" and t1.crop is None
+    first, follow = fp.calls
+    assert "[Thread #1 · 讲解中选中的一段 · 新问题]\n选中的讲解文字：\n> 让方差回到 1\n为什么是 1？" in first.prompt
+    assert [i.name for i in first.images] == ["page-2.png"]  # no crop
+    assert follow.prompt == "[Thread #1 · 追问]\n再说说"
+
+
+# --- whole-course retrieval (M6) -------------------------------------------------
+
+def test_qa_runs_in_course_folder_with_search_tools(setup):
+    from gloss.providers import ToolUse
+    fp = FakeProvider(reply="见第 3 页。", tool_calls=[ToolUse("Grep", {"pattern": "Multi-head"}),
+                                                       ToolUse("Read", {"file_path": "/w/page-3.png"})])
+
+    async def steps(tutor, course):
+        course.set_transcript_spans({3: "老师：多头就是并行做 h 次。"})
+        _, _, j = tutor.ask(course, 2, (0, 0, .5, .5), "后面讲的多头和这个什么关系？")
+        evs = await finish(j)
+        await finish(tutor.explain(course, 1))
+        return evs, course
+
+    evs, course = run_tutor(setup, fp, steps)
+    qa, explain = fp.calls
+    folder = qa.cwd
+    assert folder.name == course.id and folder.parent.name == "courses"
+    assert qa.tools == ("Read", "Grep", "Glob")
+    assert "整门课的材料" in qa.system and "全部 3 页" in qa.system
+    md = (folder / "course.md").read_text()
+    assert "## 第 3 页\n\nMulti-head attention" in md and "老师：多头就是并行做 h 次。" in md
+    assert sorted(p.name for p in folder.glob("page-*.png")) == ["page-1.png", "page-2.png", "page-3.png"]
+    assert [e for e in evs if e["type"] == "tool"] == [
+        {"type": "tool", "name": "Grep", "target": "search:Multi-head"},
+        {"type": "tool", "name": "Read", "target": "page:3"}]
+    # Explanations also run inside the course folder, but with Read only.
+    assert explain.cwd == folder and explain.tools == ("Read",)
+
+
+def test_retrieval_off(setup):
+    course, ws = setup
+    fp = FakeProvider()
+
+    async def go():
+        tutor = Tutor(fp, JobManager(2), ws, retrieval=False)
+        _, _, j = tutor.ask(course, 2, (0, 0, .5, .5), "q")
+        await finish(j)
+
+    asyncio.run(go())
+    (call,) = fp.calls
+    assert call.tools == ("Read",) and "整门课的材料" not in call.system
+    assert not (call.cwd / "course.md").exists()
+
+
+def test_course_md_rewritten_only_on_change(setup):
+    from gloss.tutor import Scratch
+    course, ws = setup
+    s = Scratch(ws, course)
+    s.materials()
+    md = s.dir / "course.md"
+    first = md.stat().st_mtime_ns
+    s.materials()
+    assert md.stat().st_mtime_ns == first
+    course.set_transcript_spans({1: "新内容"})
+    s.materials()
+    assert "新内容" in md.read_text()
+
+
+@pytest.mark.parametrize("name, inp, out", [
+    ("Read", {"file_path": "/a/b/page-12.png"}, "page:12"),
+    ("Read", {"file_path": "course.md"}, "course"),
+    ("Read", {"file_path": "crop-x.png"}, "file"),
+    ("Grep", {"pattern": "softmax"}, "search:softmax"),
+    ("Glob", {"pattern": "*.png"}, "files"),
+])
+def test_tool_target(name, inp, out):
+    from gloss.tutor import tool_target
+    assert tool_target(name, inp) == out

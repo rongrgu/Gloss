@@ -33,7 +33,9 @@ def make_deck(
         y = 80
         for j, line in enumerate(lines):
             size = 36 if j == 0 else 22
-            page.insert_text((60, y), line, fontsize=size)
+            # The default Helvetica can't encode CJK (it extracts as "····"); use PyMuPDF's built-in CJK font.
+            cjk = any(ord(ch) > 0x2E7F for ch in line)
+            page.insert_text((60, y), line, fontsize=size, fontname="china-s" if cjk else "helv")
             y += size * 2.2
         if rotate and i in rotate:
             page.set_rotation(rotate[i])

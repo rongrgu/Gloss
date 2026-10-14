@@ -87,3 +87,13 @@ describe('parseSse', () => {
     expect(out[0].rest).toBe('event: x\ndata: {"b"')
   })
 })
+
+describe('describeTool', async () => {
+  const { describeTool } = await import('./useSlide')
+  it('turns tool targets into status text', () => {
+    expect(describeTool('page:7')).toBe('正在查看第 7 页…')
+    expect(describeTool('search:softmax')).toBe('正在课件里搜索「softmax」…')
+    expect(describeTool('course')).toBe('正在查阅整门课的内容…')
+    expect(describeTool('files')).toBe('正在查阅课件…')
+  })
+})

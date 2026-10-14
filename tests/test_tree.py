@@ -105,3 +105,48 @@ def test_concurrent_requests_share_one_job(setup):  # noqa: F811
 
     assert run_tutor(setup, fp, steps) is True
     assert len(fp.calls) == 1
+
+
+# --- transcript alignment ---------------------------------------------------------
+
+TRANSCRIPT = ("今天讲注意力。" * 10 + "\n\n" + "缩放点积注意力的公式是 softmax(QK^T/sqrt(d))V。" * 12 + "\n\n"
+              + "多头注意力把 d 维分成 h 份。" * 15)
+
+
+def test_align_transcript_retries_then_stores_spans(setup):  # noqa: F811
+    from gloss.transcript import segment, target_for
+    course, _ = setup
+    course.put_asset("transcript", "text/plain", TRANSCRIPT.encode())
+    segs = segment(TRANSCRIPT, target_for(TRANSCRIPT, 3))
+    last = len(segs) - 1
+    bad = {"slides": [{"page": 2, "first": 0, "last": 999}]}
+    good = {"slides": [{"page": 2, "first": 0, "last": 1}, {"page": 3, "first": 2, "last": last}]}
+    fp = FakeProvider(structured=[bad, good])
+
+    async def steps(tutor, course):
+        evs = await finish(tutor.align_transcript(course))
+        return evs
+
+    evs = run_tutor(setup, fp, steps)
+    assert evs[-1] == {"type": "done", "aligned_pages": [2, 3], "segments": len(segs)}
+    first, second = fp.calls
+    assert "[段0] 今天讲注意力" in first.prompt and f"编号 0–{len(segs) - 1}" in first.prompt
+    assert "段落范围 0–999 不合法" in second.prompt
+    assert course.get_slide(1).transcript_span is None
+    assert course.get_slide(2).transcript_span.startswith("今天讲注意力")
+    assert "多头注意力" in course.get_slide(3).transcript_span
+    assert course.transcript_pages() == [2, 3]
+
+
+def test_transcript_reaches_explanation_and_qa_prompts(setup):  # noqa: F811
+    course, _ = setup
+    course.set_transcript_spans({2: "老师：除以根号 d 是为了稳定。"})
+    fp = FakeProvider()
+
+    async def steps(tutor, course):
+        await finish(tutor.explain(course, 2))
+        _, _, j = tutor.ask(course, 2, (0, 0, 0.5, 0.5), "q")
+        await finish(j)
+
+    run_tutor(setup, fp, steps)
+    assert all("老师：除以根号 d 是为了稳定。" in c.prompt for c in fp.calls)

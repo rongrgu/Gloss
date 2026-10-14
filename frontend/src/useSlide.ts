@@ -7,6 +7,15 @@ export interface AnswerStream {
   status: 'queued' | 'answering' | 'error'
   text: string
   error?: string
+  activity?: string // what Claude is looking at right now (whole-course retrieval)
+}
+
+/** Human-readable form of a `tool` event target. */
+export function describeTool(target: string): string {
+  if (target.startsWith('page:')) return `正在查看第 ${target.slice(5)} 页…`
+  if (target.startsWith('search:')) return `正在课件里搜索「${target.slice(7)}」…`
+  if (target === 'course') return '正在查阅整门课的内容…'
+  return '正在查阅课件…'
 }
 
 export type ExplainState =
@@ -50,7 +59,8 @@ export function useSlide(cid: string, page: number, onCourseChanged: () => void)
         switch (ev.type) {
           case 'queued': return { ...s, [tid]: { ...cur, status: 'queued' } }
           case 'start': return { ...s, [tid]: { ...cur, status: 'answering' } }
-          case 'delta': return { ...s, [tid]: { ...cur, status: 'answering', text: cur.text + ev.text } }
+          case 'delta': return { ...s, [tid]: { ...cur, status: 'answering', text: cur.text + ev.text, activity: undefined } }
+          case 'tool': return { ...s, [tid]: { ...cur, status: 'answering', activity: describeTool(ev.target) } }
           case 'reset': return { ...s, [tid]: { ...cur, text: '' } }
           case 'error': return { ...s, [tid]: { ...cur, status: 'error', error: ev.message } }
           default: return s
@@ -120,8 +130,8 @@ export function useSlide(cid: string, page: number, onCourseChanged: () => void)
     }
   }, [cid, page, followAnswer, followExplain, generate])
 
-  const ask = useCallback(async (rect: Rect, question: string) => {
-    const r = await api.ask(cid, page, rect, question)
+  const ask = useCallback(async (anchor: { rect: Rect } | { quote: string }, question: string) => {
+    const r = await api.ask(cid, page, anchor, question)
     setThreads((ts) => [...ts, r.thread])
     followAnswer(r.job, r.thread.id)
     changed.current()

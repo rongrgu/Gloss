@@ -42,19 +42,28 @@ class Explanation:
     created_at: str
 
 
+ANCHORS = ("slide_region", "explanation_text")
+QUOTE_MAX = 2000
+
+
 @dataclass
 class Thread:
     id: str
     page: int
     n: int
-    anchor_type: str
-    x: float
-    y: float
-    w: float
-    h: float
+    anchor_type: str  # 'slide_region' (x/y/w/h + crop) | 'explanation_text' (quote)
+    x: float | None
+    y: float | None
+    w: float | None
+    h: float | None
     crop: bytes | None
     minimized: bool
     created_at: str
+    quote: str | None = None
+
+    @property
+    def rect(self) -> tuple[float, float, float, float] | None:
+        return None if self.x is None else (self.x, self.y, self.w, self.h)
 
 
 @dataclass
@@ -186,6 +195,10 @@ class Course:
         row = self._one("SELECT mime, data FROM assets WHERE name = ?", (name,))
         return (row[0], row[1]) if row else None
 
+    def delete_asset(self, name: str) -> None:
+        with self._tx() as c:
+            c.execute("DELETE FROM assets WHERE name = ?", (name,))
+
     def list_assets(self) -> list[tuple[str, str]]:
         return [(r[0], r[1]) for r in self._all("SELECT name, mime FROM assets ORDER BY name")]
 
@@ -223,6 +236,16 @@ class Course:
         with self._tx() as c:
             self._require_page(c, page)
             c.execute("UPDATE slides SET transcript_span = ? WHERE page = ?", (span, page))
+
+    def set_transcript_spans(self, spans: dict[int, str]) -> None:
+        """Replace every slide's transcript span at once (pages not in `spans` get none)."""
+        with self._tx() as c:
+            c.execute("UPDATE slides SET transcript_span = NULL")
+            c.executemany("UPDATE slides SET transcript_span = ? WHERE page = ?",
+                          [(text, page) for page, text in spans.items()])
+
+    def transcript_pages(self) -> list[int]:
+        return [r[0] for r in self._all("SELECT page FROM slides WHERE transcript_span IS NOT NULL ORDER BY page")]
 
     def _require_page(self, c: sqlite3.Connection, page: int) -> None:
         if c.execute("SELECT 1 FROM slides WHERE page = ?", (page,)).fetchone() is None:
@@ -283,25 +306,39 @@ class Course:
     def create_thread(
         self,
         page: int,
-        rect: tuple[float, float, float, float],
+        rect: tuple[float, float, float, float] | None,
         crop: bytes | None = None,
         anchor_type: str = "slide_region",
+        quote: str | None = None,
     ) -> Thread:
-        x, y, w, h = rect
-        if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < w and 0 < h and x + w <= 1 + 1e-9 and y + h <= 1 + 1e-9):
-            raise ValueError(f"rect must be 0–1 relative and inside the slide: {rect}")
+        """A question on a slide region (`rect`, 0–1) or on a passage of the explanation (`quote`)."""
+        if anchor_type not in ANCHORS:
+            raise ValueError(f"unknown anchor_type {anchor_type!r}")
+        if anchor_type == "slide_region":
+            if rect is None or quote is not None:
+                raise ValueError("slide_region threads need a rect and no quote")
+            x, y, w, h = rect
+            if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < w and 0 < h and x + w <= 1 + 1e-9 and y + h <= 1 + 1e-9):
+                raise ValueError(f"rect must be 0–1 relative and inside the slide: {rect}")
+        else:
+            quote = (quote or "").strip()
+            if rect is not None or crop is not None or not quote:
+                raise ValueError("explanation_text threads need a quote and no rect / crop")
+            if len(quote) > QUOTE_MAX:
+                raise ValueError(f"quote longer than {QUOTE_MAX} characters")
+            x = y = w = h = None
         with self._tx() as c:
             self._require_page(c, page)
             n = c.execute("SELECT COALESCE(MAX(n), 0) + 1 FROM threads WHERE page = ?", (page,)).fetchone()[0]
-            t = Thread(uuid.uuid4().hex, page, n, anchor_type, x, y, w, h, crop, False, now())
+            t = Thread(uuid.uuid4().hex, page, n, anchor_type, x, y, w, h, crop, False, now(), quote)
             c.execute(
-                "INSERT INTO threads (id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (t.id, t.page, t.n, t.anchor_type, x, y, w, h, crop, 0, t.created_at),
+                "INSERT INTO threads (id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at, quote) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (t.id, t.page, t.n, t.anchor_type, x, y, w, h, crop, 0, t.created_at, quote),
             )
             return t
 
-    _THREAD_COLS = "id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at"
+    _THREAD_COLS = "id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at, quote"
 
     def get_thread(self, thread_id: str) -> Thread | None:
         row = self._one(f"SELECT {self._THREAD_COLS} FROM threads WHERE id = ?", (thread_id,))
@@ -394,4 +431,4 @@ def _slide(row: tuple) -> Slide:
 
 
 def _thread(row: tuple) -> Thread:
-    return Thread(*row[:9], bool(row[9]), row[10])
+    return Thread(*row[:9], bool(row[9]), row[10], row[11])

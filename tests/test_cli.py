@@ -36,3 +36,15 @@ def test_seed_workspace_keeps_user_edits(tmp_path):
     seed_workspace(src, dst)
     assert (dst / "CLAUDE.md").read_text() == "bundled role"
     assert (dst / "prompts" / "a.md").read_text() == "my edit"
+
+
+def test_doctor_api_provider(monkeypatch, tmp_path):
+    from gloss.config import Config
+    from gloss.doctor import run_checks
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    checks = {c.name: c for c in run_checks(Config(provider="anthropic_api", workspace=tmp_path))}
+    assert checks["anthropic SDK"].status == "ok"
+    assert checks["API key"].status == "fail" and "claude" not in checks and "login" not in checks
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    checks = {c.name: c for c in run_checks(Config(provider="anthropic_api", workspace=tmp_path))}
+    assert checks["API key"].status == "ok" and "ANTHROPIC_API_KEY" not in checks

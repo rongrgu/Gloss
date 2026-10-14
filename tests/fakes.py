@@ -17,6 +17,8 @@ class Call:
     session: SessionRef | None
     system: str | None
     json_schema: dict | None = None
+    cwd: Path | None = None
+    tools: tuple = ("Read",)
 
 
 @dataclass
@@ -29,8 +31,12 @@ class FakeProvider:
     model: str = "fake-model"
     structured: list = field(default_factory=list)  # successive Done.data values for json_schema calls
 
-    async def run(self, prompt, *, images=(), session=None, system=None, json_schema=None):
-        self.calls.append(Call(prompt, list(images), session, system, json_schema))
+    tool_calls: list = field(default_factory=list)  # ToolUse events to emit before answering
+
+    async def run(self, prompt, *, images=(), session=None, system=None, json_schema=None, cwd=None, tools=("Read",)):
+        self.calls.append(Call(prompt, list(images), session, system, json_schema, cwd, tuple(tools)))
+        for t in self.tool_calls:
+            yield t
         for p in images:
             assert Path(p).exists(), f"image not written: {p}"
         if session and not session.new and session.id in self.forget:

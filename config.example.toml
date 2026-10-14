@@ -1,6 +1,9 @@
 # Copy to config.toml (not committed) and edit.
 
 # claude_cli: uses your logged-in `claude` CLI and your subscription quota.
+# anthropic_api: calls the Anthropic API directly and bills the key in ANTHROPIC_API_KEY.
+#   Needs `pip install 'gloss[api]'` (or `uv sync --extra api`). No whole-course search with this
+#   provider, and every follow-up resends the slide's history (prompt caching keeps that cheap).
 provider = "claude_cli"
 
 # Alias or full model name, passed to `claude --model`. Pro users may prefer "haiku" or "sonnet".
@@ -11,6 +14,11 @@ concurrency = 2
 
 # Language for explanations and answers.
 language = "中文"
+
+# Let answers look things up in the rest of the course (other slides, the transcript) when a
+# question needs it. Uses a bit more quota on those questions. Set to false to answer from the
+# current slide only.
+qa_retrieval = true
 
 # Where newly imported courses (.gloss files) are saved.
 # library = "~/Gloss"
