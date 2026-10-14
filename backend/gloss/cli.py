@@ -65,13 +65,15 @@ def serve(args: argparse.Namespace) -> int:
 
 
 def export(args: argparse.Namespace) -> int:
+    from .config import app_dir
     from .export import export_markdown
+    from .i18n import Prefs
     from .store import Course
 
     src = Path(args.file)
     out = Path(args.output) if args.output else src.with_suffix(".md")
     with Course.open(src) as c:
-        out.write_text(export_markdown(c), encoding="utf-8")
+        out.write_text(export_markdown(c, Prefs(app_dir() / "prefs.json").locale), encoding="utf-8")
     print(f"wrote {out}")
     return 0
 

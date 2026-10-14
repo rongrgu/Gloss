@@ -1,6 +1,7 @@
 import { forwardRef, useRef } from 'react'
 import type { Thread } from './api'
 import { clamp, dragRect, MIN_SELECTION } from './geometry'
+import { useT } from './i18n'
 
 export interface Sel {
   x: number
@@ -11,7 +12,7 @@ export interface Sel {
 
 const pct = (r: Sel) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` })
 export const asSel = (t: Thread): Sel => ({ x: t.rect![0], y: t.rect![1], w: t.rect![2], h: t.rect![3] })
-export const titleOf = (t: Thread) => t.messages.find((m) => m.role === 'user')?.content ?? '新问题'
+export const titleOf = (t: Thread, fallback = '') => t.messages.find((m) => m.role === 'user')?.content ?? fallback
 
 interface Props {
   src: string
@@ -31,6 +32,7 @@ export const Stage = forwardRef<HTMLDivElement, Props>(function Stage(
   { src, alt, width, threads, busy, sel, dragging, onSelect, onOpenThread, onImageLoad }, ref,
 ) {
   const overlay = useRef<HTMLDivElement>(null)
+  const m = useT()
   const drag = useRef<{ a: { x: number; y: number }; id: number } | null>(null)
 
   const rel = (e: React.PointerEvent) => {
@@ -64,8 +66,8 @@ export const Stage = forwardRef<HTMLDivElement, Props>(function Stage(
         {threads.filter((t) => t.rect).map((t) => {
           const pin = <span className={'pin' + (busy.has(t.id) ? ' busy' : '')}>{t.n}</span>
           return t.minimized ? (
-            <button key={t.id} className="marker" style={pct(asSel(t))} title={titleOf(t)}
-              aria-label={`打开问题 ${t.n}：${titleOf(t)}`} onClick={() => onOpenThread(t.id)}>{pin}</button>
+            <button key={t.id} className="marker" style={pct(asSel(t))} title={titleOf(t, m.newQuestion)}
+              aria-label={m.openQuestion(t.n, titleOf(t, m.newQuestion))} onClick={() => onOpenThread(t.id)}>{pin}</button>
           ) : (
             <div key={t.id} className="region" style={pct(asSel(t))}>{pin}</div>
           )

@@ -125,7 +125,8 @@ def test_follow_up_and_second_thread_resume(setup):
     first, follow, second = fp.calls
     sid = first.session.id
     assert follow.session.id == sid and follow.session.new is False and follow.system is None
-    assert follow.prompt == "[Thread #1 · 追问]\n追问一下" and follow.images == []
+    # resumed sessions restate the answer language (the interface language may have changed, §9.3)
+    assert follow.prompt == "[Thread #1 · 追问]\n追问一下\n\n（用中文回答。）" and follow.images == []
     assert second.session.id == sid and second.prompt.startswith("[Thread #2 · 选区 x=0.50")
     assert [i.name for i in second.images] == [f"crop-{t2.id}.png"]  # page image already in session
 
@@ -244,7 +245,7 @@ def test_question_on_explanation_text(setup):
     first, follow = fp.calls
     assert "[Thread #1 · 讲解中选中的一段 · 新问题]\n选中的讲解文字：\n> 让方差回到 1\n为什么是 1？" in first.prompt
     assert [i.name for i in first.images] == ["page-2.png"]  # no crop
-    assert follow.prompt == "[Thread #1 · 追问]\n再说说"
+    assert follow.prompt.startswith("[Thread #1 · 追问]\n再说说")
 
 
 # --- whole-course retrieval (M6) -------------------------------------------------

@@ -45,7 +45,7 @@ def test_repair():
 
 def test_repair_garbage():
     t = repair_tree("nonsense", 2, fallback_title="Lec")
-    assert t["children"] == [{"title": "全部 slides", "summary": "", "slides": [1, 2]}]
+    assert t["children"] == [{"title": "All slides", "summary": "", "slides": [1, 2]}]
 
 
 def test_build_tree_retries_with_feedback_then_saves(setup):  # noqa: F811

@@ -27,7 +27,13 @@ with sync_playwright() as p:
     pg.on("console", lambda m: m.type in ("error", "warning") and log.append(f"console.{m.type}: {m.text}"))
     pg.on("pageerror", lambda e: log.append(f"pageerror: {e}"))
 
-    pg.goto(URL); pg.wait_for_selector("text=导入课件")
+    # English by default (fresh GLOSS_HOME); the main flow below runs in Chinese, then switches back (§9.3)
+    pg.goto(URL); pg.wait_for_selector("text=Import slides")
+    assert pg.evaluate("document.documentElement.lang") == "en"
+    pg.screenshot(path=shots / "00-home-en.png")
+    pg.click("button.lang"); pg.wait_for_selector("text=导入课件")
+    pg.reload(); pg.wait_for_selector("text=导入课件")  # the choice is remembered by the backend
+    step("default English, switched to 中文")
     pg.screenshot(path=shots / "01-home.png")
     step("home ok; importing")
     with pg.expect_file_chooser() as fc:
@@ -115,6 +121,29 @@ with sync_playwright() as p:
     pg.click("text=导图"); pg.wait_for_selector(".react-flow .badge")
     pg.screenshot(path=shots / "12-overview-badges.png")
     step("overview badge ok")
+
+    # back to English: labels switch in place, new explanations and answers come in English
+    pg.click("button.lang"); pg.wait_for_selector("text=Regenerate map")
+    pg.locator(".react-flow .thumb[aria-label^='Slide 2']").click(); pg.wait_for_selector(".stage img")
+    pg.wait_for_selector("h2:has-text('Explanation')"); pg.wait_for_selector("text=Session log")
+    pg.click(".linkbtn:has-text('Regenerate')")
+    pg.wait_for_selector(".explain-body .md.streaming", timeout=60000)
+    pg.wait_for_selector(".explain-body .md:not(.streaming)", timeout=120000)
+    text = pg.locator(".explain-body").inner_text()
+    han = sum("\u4e00" <= ch <= "\u9fff" for ch in text)
+    assert han < len(text) * 0.05, f"explanation not in English: {text[:120]}"
+    step("English explanation: " + text[:80].replace("\n", " "))
+    pg.click(".marker"); pg.wait_for_selector(".cbox")
+    pg.fill(".cfoot input", "And in one sentence, why sqrt and not d?")
+    pg.keyboard.press("Enter")
+    pg.wait_for_function("document.querySelectorAll('.cbox .ma:not(.streaming)').length >= 3", timeout=120000)
+    pg.wait_for_function("!document.querySelector('.pin.busy')", timeout=30000)
+    ans = pg.locator(".cbox .ma").last.inner_text()
+    assert sum("\u4e00" <= ch <= "\u9fff" for ch in ans) < len(ans) * 0.05, f"follow-up not in English: {ans[:120]}"
+    step("English follow-up in the resumed session: " + ans[:80].replace("\n", " "))
+    pg.screenshot(path=shots / "12b-english.png")
+    pg.click("[aria-label='Minimize this question']")
+    pg.click("text=Map"); pg.wait_for_selector(".react-flow .badge")
 
     # dark + narrow
     d = b.new_context(viewport={"width": 390, "height": 844}, color_scheme="dark", device_scale_factor=2)

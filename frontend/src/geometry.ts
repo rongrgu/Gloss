@@ -1,4 +1,5 @@
 // Pure layout logic ported from docs/mockup.html. Unit-tested in geometry.test.ts.
+import type { Messages } from './i18n'
 
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 
@@ -117,10 +118,10 @@ export function fitWidth(paneW: number, paneH: number, aspect: number): number {
   return Math.max(160, Math.min(paneW - 16, (paneH - 42) * aspect))
 }
 
-/** Text appended to the notes by "摘到笔记": the question and the first paragraph of the answer. */
-export function noteClip(n: number, question: string, answer: string): string {
+/** Text appended to the notes by "Clip to notes": the question and the first paragraph of the answer. */
+export function noteClip(n: number, question: string, answer: string, t: Messages): string {
   const first = answer.trim().split(/\n\s*\n/)[0]
-  return `【问题 ${n}】${question}\n${first}`
+  return `${t.noteClip(n, question)}\n${first}`
 }
 
 export function appendNote(existing: string, block: string): string {

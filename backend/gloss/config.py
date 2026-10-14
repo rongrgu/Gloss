@@ -62,7 +62,7 @@ class Config:
     provider: str = "claude_cli"  # claude_cli (your Claude login) | anthropic_api (ANTHROPIC_API_KEY, `gloss[api]`)
     model: str = "sonnet"
     concurrency: int = 2  # global cap on simultaneous LLM calls
-    language: str = "中文"  # explanation / answer language
+    language: str | None = None  # explanation / answer language; None follows the interface language (§9.3)
     workspace: Path = field(default_factory=default_workspace)
     library: Path = field(default_factory=lambda: Path.home() / "Gloss")  # where new .gloss files go
     claude_bin: str | None = None  # default: found on PATH

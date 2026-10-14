@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseSse } from './api'
+import { MESSAGES } from './i18n'
 import {
   DEFAULT_LAYOUT, appendNote, dragRect, fitWidth, gridFor, noteClip, normalizeLayout, placePopup,
 } from './geometry'
@@ -65,7 +66,8 @@ describe('layout', () => {
 
 describe('notes', () => {
   it('clips the first paragraph', () => {
-    expect(noteClip(2, '为什么？', '第一段。\n\n第二段。')).toBe('【问题 2】为什么？\n第一段。')
+    expect(noteClip(2, '为什么？', '第一段。\n\n第二段。', MESSAGES.zh)).toBe('【问题 2】为什么？\n第一段。')
+    expect(noteClip(2, 'Why?', 'First.\n\nSecond.', MESSAGES.en)).toBe('[Question 2] Why?\nFirst.')
   })
   it('appends with a blank line', () => {
     expect(appendNote('', 'x')).toBe('x')
@@ -91,9 +93,17 @@ describe('parseSse', () => {
 describe('describeTool', async () => {
   const { describeTool } = await import('./useSlide')
   it('turns tool targets into status text', () => {
-    expect(describeTool('page:7')).toBe('正在查看第 7 页…')
-    expect(describeTool('search:softmax')).toBe('正在课件里搜索「softmax」…')
-    expect(describeTool('course')).toBe('正在查阅整门课的内容…')
-    expect(describeTool('files')).toBe('正在查阅课件…')
+    expect(describeTool('page:7', MESSAGES.zh)).toBe('正在查看第 7 页…')
+    expect(describeTool('search:softmax', MESSAGES.zh)).toBe('正在课件里搜索「softmax」…')
+    expect(describeTool('course', MESSAGES.zh)).toBe('正在查阅整门课的内容…')
+    expect(describeTool('files', MESSAGES.zh)).toBe('正在查阅课件…')
+    expect(describeTool('page:7', MESSAGES.en)).toBe('Looking at slide 7…')
+    expect(describeTool('search:softmax', MESSAGES.en)).toBe('Searching the slides for “softmax”…')
+  })
+})
+
+describe('i18n', () => {
+  it('has the same keys in every locale', () => {
+    expect(Object.keys(MESSAGES.en).sort()).toEqual(Object.keys(MESSAGES.zh).sort())
   })
 })

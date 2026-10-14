@@ -45,13 +45,14 @@ uv run gloss export course.gloss    # writes course.md
 
 ## Using it
 
-- **Mind map** — drag to pan, scroll or use the buttons to zoom, click a topic to fold it. Click a thumbnail to open that slide. "重新生成导图" asks Claude to regroup the slides; your questions and notes are untouched.
-- **Slide workspace** — `←` / `→` change pages. The 布局 (layout) menu switches between stacked and side-by-side, hides panels, and resets; drag the dividers to resize (double-click resets one).
-- **Ask** — drag a rectangle on the slide, type your question, press Enter. Follow up in the same box. Questions on the same slide are answered one at a time, so a second question may briefly show as queued. To ask about part of the explanation, select the text and press 就这段提问; those questions show up as numbered chips under the explanation.
-- **Transcript** — on the course page, 上传 transcript. Claude aligns it to the slides (one call, usually under 20 seconds). Each slide's explanation panel can show its excerpt ("transcript 片段"). Explanations generated before the upload aren't redone automatically — use 重新生成 on the slides you care about.
-- **Notes** — plain text per slide, saved automatically. "摘到笔记" under an answer copies the question and the answer's first paragraph into the page's notes.
-- **后台 session** — shows exactly what was sent to Claude for this slide (for the curious).
-- **Export** — "导出 Markdown" on the course page (or `gloss export`) writes the map, explanations, questions and answers, and notes as one Markdown file.
+- **Language** — the interface is in English by default; the 中文 / EN button in the top bar switches it (and the language Claude explains and answers in, unless `language` is set in `config.toml`). Content already generated keeps its language; use Regenerate to redo it.
+- **Mind map** — drag to pan, scroll or use the buttons to zoom, click a topic to fold it. Click a thumbnail to open that slide. "Regenerate map" asks Claude to regroup the slides; your questions and notes are untouched.
+- **Slide workspace** — `←` / `→` change pages. The Layout menu switches between stacked and side-by-side, hides panels, and resets; drag the dividers to resize (double-click resets one).
+- **Ask** — drag a rectangle on the slide, type your question, press Enter. Follow up in the same box. Questions on the same slide are answered one at a time, so a second question may briefly show as queued. To ask about part of the explanation, select the text and press "Ask about this"; those questions show up as numbered chips under the explanation.
+- **Transcript** — on the course page, "Upload transcript". Claude aligns it to the slides (one call, usually under 20 seconds). Each slide's explanation panel can show its excerpt ("Transcript passage"). Explanations generated before the upload aren't redone automatically — use "Regenerate" on the slides you care about.
+- **Notes** — plain text per slide, saved automatically. "Clip to notes" under an answer copies the question and the answer's first paragraph into the page's notes.
+- **Session log** — shows exactly what was sent to Claude for this slide (for the curious).
+- **Export** — "Export Markdown" on the course page (or `gloss export`) writes the map, explanations, questions and answers, and notes as one Markdown file.
 
 A `.gloss` file is self-contained: send it to a classmate and they can read everything in Gloss, even without Claude installed (they just can't ask new questions).
 
@@ -75,7 +76,7 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 | key | default | meaning |
 |---|---|---|
 | `model` | `"sonnet"` | passed to `claude --model` — an alias (`haiku`, `sonnet`, `opus`) or a full model name |
-| `language` | `"中文"` | language for explanations, answers and the mind map |
+| `language` | (unset) | language for explanations, answers and the mind map. Unset, it follows the interface language (English by default; switch with the 中文 / EN button in the top bar). Set it to pin one, e.g. `"中文"` |
 | `concurrency` | `2` | how many Claude calls may run at once (different slides) |
 | `qa_retrieval` | `true` | let answers search the rest of the course when a question needs it |
 | `provider` | `"claude_cli"` | `"claude_cli"` (your Claude Code login) or `"anthropic_api"` (see below) |

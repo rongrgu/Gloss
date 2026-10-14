@@ -8,6 +8,7 @@ import { api, type Course } from './api'
 import { Icon } from './Icon'
 import { layoutMap, THUMB_W } from './mapLayout'
 import { go } from './route'
+import { useT } from './i18n'
 
 interface Ctx {
   course: Course
@@ -24,11 +25,12 @@ const hidden = { opacity: 0, pointerEvents: 'none' as const, border: 0, width: 1
 const RootNode = memo(function RootNode() {
   const { course } = useContext(MapCtx)
   const tree = course.tree!
+  const t = useT()
   return (
     <div className="root" style={{ position: 'relative', boxShadow: 'var(--shadow-2)' }}>
       <h1>{tree.title || course.title}</h1>
       {tree.subtitle && <p>{tree.subtitle}</p>}
-      <p>{course.slide_count} 页，{tree.children.length} 个主题</p>
+      <p>{t.mapStats(course.slide_count, tree.children.length)}</p>
       <Handle type="source" position={Position.Right} style={hidden} isConnectable={false} />
     </div>
   )
@@ -53,9 +55,10 @@ const ThumbNode = memo(function ThumbNode({ data }: NodeProps<Node<Data>>) {
   const { course, noted } = useContext(MapCtx)
   const p = data.page!
   const n = course.question_counts[String(p)] ?? 0
+  const t = useT()
   return (
     <button className="thumb" onClick={() => go({ name: 'slide', cid: course.id, page: p })}
-      aria-label={`第 ${p} 页${n ? `，${n} 个问题` : ''}${noted.has(p) ? '，有笔记' : ''}`}>
+      aria-label={t.pageAria(p, n, noted.has(p))}>
       <Handle type="target" position={Position.Left} style={hidden} isConnectable={false} />
       <img src={api.imageUrl(course.id, p)} alt="" loading="lazy" style={{ height: data.h, objectFit: 'cover' }} />
       <span className="pg">{p}</span>
@@ -67,10 +70,11 @@ const ThumbNode = memo(function ThumbNode({ data }: NodeProps<Node<Data>>) {
 
 const MoreNode = memo(function MoreNode({ data }: NodeProps<Node<Data>>) {
   const { course, toggle } = useContext(MapCtx)
+  const t = useT()
   return (
     <button className="more" onClick={() => toggle(data.topic!)}>
       <Handle type="target" position={Position.Left} style={hidden} isConnectable={false} />
-      展开 {course.tree!.children[data.topic!].slides.length} 页
+      {t.expandPages(course.tree!.children[data.topic!].slides.length)}
     </button>
   )
 })

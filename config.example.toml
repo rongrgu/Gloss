@@ -12,8 +12,10 @@ model = "sonnet"
 # How many Claude calls may run at once (different slides). Calls on the same slide always queue.
 concurrency = 2
 
-# Language for explanations and answers.
-language = "中文"
+# Language for explanations and answers. By default it follows the interface language you pick
+# in the app (中文 / EN). Set it to pin a language regardless of the interface, e.g. English UI
+# with Chinese explanations.
+# language = "中文"
 
 # Let answers look things up in the rest of the course (other slides, the transcript) when a
 # question needs it. Uses a bit more quota on those questions. Set to false to answer from the

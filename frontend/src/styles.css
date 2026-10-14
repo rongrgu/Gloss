@@ -47,6 +47,7 @@ button,input,textarea{font:inherit;color:inherit}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:500}
 .btn.ghost{border-color:transparent;background:transparent}
 .btn.ghost:hover:not(:disabled){background:var(--desk)}
+.btn.lang{font-weight:600;min-width:44px;justify-content:center}
 .btn[aria-pressed="true"]{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
 .icon{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .crumb{min-width:0;display:flex;flex-direction:column;line-height:1.25;padding-left:4px}

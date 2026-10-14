@@ -4,8 +4,10 @@ import Home from './Home'
 import Overview from './Overview'
 import { go, pathFor, rememberPath, useRoute } from './route'
 import Workspace from './Workspace'
+import { useT } from './i18n'
 
 export default function App() {
+  const t = useT()
   const route = useRoute()
   const cid = route.name === 'home' ? null : route.cid
   const [course, setCourse] = useState<Course | null>(null)
@@ -40,7 +42,7 @@ export default function App() {
         if (c.id !== cid) go(route.name === 'slide' ? { ...route, cid: c.id } : { name: 'overview', cid: c.id }, true)
       })
       .catch((e) => live && setError(e instanceof ApiError && e.status === 404
-        ? '这门课当前没有打开。请从首页的“最近打开”重新打开。' : String(e)))
+        ? t.courseNotOpen : String(e)))
     return () => {
       live = false
     }
@@ -53,7 +55,7 @@ export default function App() {
 
   if (route.name === 'home') return <Home onOpen={(c) => { rememberPath(c.id, c.path); go({ name: 'overview', cid: c.id }) }} />
   if (error) return <Home notice={error} onOpen={(c) => { rememberPath(c.id, c.path); go({ name: 'overview', cid: c.id }) }} />
-  if (!course || course.id !== cid) return <div className="home"><p className="lead">正在打开…</p></div>
+  if (!course || course.id !== cid) return <div className="home"><p className="lead">{t.opening}</p></div>
   if (route.name === 'overview') return <Overview course={course} onRefresh={refreshCourse} />
   return <Workspace key={course.id} course={course} page={route.page} onCourseChanged={refreshCourse} />
 }

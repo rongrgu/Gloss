@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, followJob, type Course, type JobInfo } from './api'
+import { useT } from './i18n'
 
 type St = { status: 'idle' } | { status: 'aligning' } | { status: 'error'; error: string } | { status: 'done'; pages: number }
 
@@ -40,6 +41,7 @@ export function useTranscript(course: Course, onRefresh: () => void) {
 }
 
 export function TranscriptMenu({ course, t }: { course: Course; t: ReturnType<typeof useTranscript> }) {
+  const m = useT()
   const file = useRef<HTMLInputElement>(null)
   const det = useRef<HTMLDetailsElement>(null)
   const close = () => { if (det.current) det.current.open = false }
@@ -52,7 +54,7 @@ export function TranscriptMenu({ course, t }: { course: Course; t: ReturnType<ty
     return (
       <>
         <button className="btn ghost" disabled={busy} onClick={() => file.current?.click()}
-          title="上传老师讲课的文字稿（.txt / .vtt / .srt），讲解和问答会参考对应的段落">上传 transcript</button>
+          title={m.uploadTranscriptTitle}>{m.uploadTranscript}</button>
         {input}
       </>
     )
@@ -60,14 +62,14 @@ export function TranscriptMenu({ course, t }: { course: Course; t: ReturnType<ty
   return (
     <details className="menu" ref={det}>
       <summary className="btn ghost" style={{ listStyle: 'none' }}>
-        Transcript · {course.transcript.aligned_pages.length}/{course.slide_count} 页
+        {m.transcriptPages(course.transcript.aligned_pages.length, course.slide_count)}
       </summary>
       <div className="menu-pop">
-        <p className="tip">{course.transcript.name}：已对齐到 {course.transcript.aligned_pages.length} 页。之后生成的讲解和新的问答会参考对应的段落；已有的讲解可以在讲解面板里"重新生成"。</p>
-        <button className="btn" disabled={busy} onClick={() => { close(); t.realign() }}>重新对齐</button>
-        <button className="btn" disabled={busy} onClick={() => { close(); file.current?.click() }}>换一个文件</button>
+        <p className="tip">{m.transcriptInfo(course.transcript.name, course.transcript.aligned_pages.length)}</p>
+        <button className="btn" disabled={busy} onClick={() => { close(); t.realign() }}>{m.realign}</button>
+        <button className="btn" disabled={busy} onClick={() => { close(); file.current?.click() }}>{m.replaceFile}</button>
         <button className="btn" disabled={busy}
-          onClick={() => { close(); if (confirm('删除 transcript 和所有对齐结果？已生成的讲解不受影响。')) t.remove() }}>删除</button>
+          onClick={() => { close(); if (confirm(m.deleteTranscriptConfirm)) t.remove() }}>{m.delete}</button>
       </div>
       {input}
     </details>
@@ -75,9 +77,10 @@ export function TranscriptMenu({ course, t }: { course: Course; t: ReturnType<ty
 }
 
 export function TranscriptBanner({ t }: { t: ReturnType<typeof useTranscript> }) {
-  if (t.st.status === 'aligning') return <p className="warn">Claude 正在把 transcript 对齐到每一页…</p>
-  if (t.st.status === 'error') return <p className="merr">transcript 对齐失败：{t.st.error}
-    <button className="btn" onClick={t.realign}>重试</button></p>
-  if (t.st.status === 'done') return <p className="warn">transcript 已对齐到 {t.st.pages} 页。</p>
+  const m = useT()
+  if (t.st.status === 'aligning') return <p className="warn">{m.aligning}</p>
+  if (t.st.status === 'error') return <p className="merr">{m.alignFailed}{t.st.error}
+    <button className="btn" onClick={t.realign}>{m.retry}</button></p>
+  if (t.st.status === 'done') return <p className="warn">{m.aligned(t.st.pages)}</p>
   return null
 }
