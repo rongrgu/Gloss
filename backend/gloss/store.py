@@ -161,6 +161,17 @@ class Course:
     def title(self) -> str:
         return self.get_meta("title") or ""
 
+    @property
+    def id(self) -> str:
+        """Stable id for this course (scratch dir, job keys). Created on first use."""
+        with self._lock:
+            cid = self.get_meta("course_id")
+            if cid is None:
+                cid = uuid.uuid4().hex
+                with self._tx():
+                    self._set_meta("course_id", cid)
+            return cid
+
     # --- assets ------------------------------------------------------------
 
     def put_asset(self, name: str, mime: str, data: bytes) -> None:
