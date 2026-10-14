@@ -84,6 +84,12 @@ def test_missing_session(cli, monkeypatch):
         run(cli, "missing", monkeypatch, session=SessionRef("gone", new=False))
 
 
+def test_json_schema(cli, monkeypatch):
+    schema = {"type": "object", "properties": {"a": {"type": "integer"}}}
+    evs = run(cli, "structured", monkeypatch, json_schema=schema)
+    assert evs[-1].data == {"echo_schema": schema}
+
+
 def test_api_error(cli, monkeypatch):
     with pytest.raises(ProviderError, match="401.*Invalid API key"):
         run(cli, "error", monkeypatch)

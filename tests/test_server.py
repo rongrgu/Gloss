@@ -191,3 +191,17 @@ def test_no_frontend_build_is_fine(tmp_path, monkeypatch):
     cfg = Config(workspace=tmp_path / "ws", library=tmp_path / "lib")
     with TestClient(create_app(cfg, FakeProvider(), static_dir=tmp_path / "nope")) as client:
         assert client.get("/").status_code == 404
+
+
+def test_tree_endpoint_and_summary(env):
+    client, provider, _ = env
+    provider.structured = [{"title": "Attention", "subtitle": "", "children": [
+        {"title": "全部", "summary": "", "slides": [1, 2, 3]}]}]
+    c = import_deck(client)
+    assert c["tree"] is None and c["tree_job"] is None
+    assert c["aspect"] == pytest.approx(16 / 9, abs=0.01)
+    r = client.post(f"/api/courses/{c['id']}/tree").json()
+    evs = sse(client, r["job"]["id"])
+    assert evs[-1]["tree"]["children"][0]["slides"] == [1, 2, 3]
+    assert client.post(f"/api/courses/{c['id']}/tree").json() == {"tree": evs[-1]["tree"]}
+    assert client.get(f"/api/courses/{c['id']}").json()["tree"]["title"] == "Attention"

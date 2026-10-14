@@ -254,3 +254,32 @@ button,input,textarea{font:inherit;color:inherit}
 .phead .acts{display:flex;gap:4px;margin-left:auto}
 .phead .linkbtn{min-height:24px;padding:0}
 .merr{font-size:13.5px;color:#C2410C;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* mind map (React Flow), themed with the mockup tokens */
+.map-flow{flex:1;min-height:0;position:relative}
+.full .grid{flex:1;min-height:0;overflow:auto}
+.full .intro{flex:none;padding:14px 28px 10px}
+.full .intro p{margin:0}
+.react-flow{
+  --xy-background-color:var(--desk);
+  --xy-background-pattern-dots-color-default:var(--dot);
+  --xy-controls-button-background-color:var(--paper);
+  --xy-controls-button-background-color-hover:var(--desk);
+  --xy-controls-button-color:var(--ink);
+  --xy-controls-button-color-hover:var(--ink);
+  --xy-controls-button-border-color:var(--line);
+  --xy-controls-box-shadow:var(--shadow-1);
+  --xy-attribution-background-color:transparent;
+  font-family:var(--ui);
+}
+.react-flow__attribution{opacity:.5}
+/* Nodes are not selectable/draggable, so React Flow sets pointer-events:none on them; our nodes are buttons. */
+.react-flow__node{cursor:default;pointer-events:all !important}
+.react-flow__node .snode,.react-flow__node .thumb,.react-flow__node .more{cursor:pointer}
+.react-flow__controls{border-radius:9px;overflow:hidden}
+.react-flow__controls-button svg{fill:currentColor}
+.react-flow__node .thumb img{object-fit:cover}
+@media (max-width:760px){
+  /* The mockup's narrow layout drops the full-height flex column; React Flow needs a sized box. */
+  .map-flow{height:calc(100dvh - 150px)}
+}

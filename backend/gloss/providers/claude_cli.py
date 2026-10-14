@@ -41,7 +41,8 @@ class ClaudeCLIProvider:
         self.claude_bin = claude_bin
         self.timeout = timeout
 
-    def build_args(self, *, session: SessionRef | None, system: str | None) -> list[str]:
+    def build_args(self, *, session: SessionRef | None, system: str | None,
+                   json_schema: dict | None = None) -> list[str]:
         bin_ = self.claude_bin or find_claude()
         if not bin_:
             raise ProviderError("claude CLI not found on PATH; install Claude Code and log in")
@@ -57,6 +58,8 @@ class ClaudeCLIProvider:
         # The system prompt is snapshotted when a session starts; on resume it is ignored.
         if system and (session is None or session.new):
             args += ["--append-system-prompt", system]
+        if json_schema is not None:
+            args += ["--json-schema", json.dumps(json_schema)]
         return args
 
     def build_prompt(self, prompt: str, images: list[Path]) -> str:
@@ -83,8 +86,9 @@ class ClaudeCLIProvider:
         images: list[Path] = (),
         session: SessionRef | None = None,
         system: str | None = None,
+        json_schema: dict | None = None,
     ) -> AsyncIterator[Event]:
-        args = self.build_args(session=session, system=system)
+        args = self.build_args(session=session, system=system, json_schema=json_schema)
         stdin = self.build_prompt(prompt, list(images)).encode()
         proc = await asyncio.create_subprocess_exec(
             *args, cwd=self.workspace, env=clean_env(), limit=LINE_LIMIT,
@@ -145,6 +149,7 @@ class ClaudeCLIProvider:
                 session_id=result.get("session_id"),
                 model=model,
                 cost_usd=result.get("total_cost_usd"),
+                data=result.get("structured_output"),
             )
         finally:
             if proc.returncode is None:
