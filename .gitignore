@@ -1,0 +1,40 @@
+# --- Gloss: user data and course material (never commit) ---
+*.gloss
+*.gloss-wal
+*.gloss-shm
+claude_workspace/courses/
+config.toml
+# lecture material used for local testing
+*.pdf
+!tests/fixtures/**/*.pdf
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Frontend ---
+node_modules/
+frontend/dist/
+backend/gloss/static/
+
+# --- Editors / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Env ---
+.env
+.env.*
