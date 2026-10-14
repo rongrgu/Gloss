@@ -1,0 +1,19 @@
+# Copy to config.toml (not committed) and edit.
+
+# claude_cli: uses your logged-in `claude` CLI and your subscription quota.
+provider = "claude_cli"
+
+# Alias or full model name, passed to `claude --model`. Pro users may prefer "haiku" or "sonnet".
+model = "sonnet"
+
+# How many Claude calls may run at once (different slides). Calls on the same slide always queue.
+concurrency = 2
+
+# Language for explanations and answers.
+language = "中文"
+
+# Where newly imported courses (.gloss files) are saved.
+# library = "~/Gloss"
+
+# Path to the claude executable, if it is not on PATH.
+# claude_bin = "/usr/local/bin/claude"
