@@ -100,7 +100,7 @@ Start with `uv run gloss doctor`.
 
 ## Development
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the design and [`CLAUDE.md`](CLAUDE.md) for commands. In short:
+Common commands:
 
 ```sh
 uv run pytest                               # backend tests
