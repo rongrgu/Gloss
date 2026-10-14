@@ -147,7 +147,7 @@ def test_refusal(api):
     f = final(stop="refusal")
     f.stop_details = types.SimpleNamespace(category="cyber")
     client.next = FakeStream([], f)
-    with pytest.raises(ProviderError, match="拒绝.*cyber"):
+    with pytest.raises(ProviderError, match="declined.*cyber"):
         collect(p)
 
 
@@ -157,11 +157,11 @@ def _status_error(cls, status):
 
 
 @pytest.mark.parametrize("err, msg", [
-    (lambda: _status_error(anthropic.AuthenticationError, 401), "API key 无效"),
-    (lambda: _status_error(anthropic.RateLimitError, 429), "限流"),
-    (lambda: _status_error(anthropic.InternalServerError, 529), "暂时不可用"),
-    (lambda: _status_error(anthropic.BadRequestError, 400), "API 错误（400）"),
-    (lambda: anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")), "连不上"),
+    (lambda: _status_error(anthropic.AuthenticationError, 401), "invalid API key"),
+    (lambda: _status_error(anthropic.RateLimitError, 429), "rate limited"),
+    (lambda: _status_error(anthropic.InternalServerError, 529), "temporarily unavailable"),
+    (lambda: _status_error(anthropic.BadRequestError, 400), "API error \\(400\\)"),
+    (lambda: anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")), "cannot reach"),
 ])
 def test_errors(api, err, msg):
     p, client = api

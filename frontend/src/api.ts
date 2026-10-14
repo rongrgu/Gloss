@@ -49,6 +49,13 @@ export interface Tree {
   children: TreeTopic[]
 }
 
+/** App-wide preferences (DESIGN.md §9.3). */
+export interface Prefs {
+  ui_language: 'zh' | 'en' | null // null: not chosen yet (English)
+  language: string // Claude's explanation / answer language in effect
+  language_pinned: boolean // set in config.toml; doesn't follow the interface
+}
+
 export interface Course {
   id: string
   title: string
@@ -126,6 +133,8 @@ const c = (cid: string) => `/api/courses/${encodeURIComponent(cid)}`
 export const api = {
   health: () => req<{ provider: string; model: string; claude_found: boolean; logged_in: boolean | null }>('GET', '/api/health'),
   recent: () => req<RecentItem[]>('GET', '/api/recent'),
+  prefs: () => req<Prefs>('GET', '/api/prefs'),
+  setPrefs: (ui_language: 'zh' | 'en') => req<Prefs>('PUT', '/api/prefs', { ui_language }),
   importPdf: (file: File) => {
     const fd = new FormData()
     fd.append('file', file)

@@ -13,6 +13,7 @@ import pymupdf
 from .jobs import Job, JobManager
 from .providers import Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
 from .store import Course, Message, Thread
+from . import i18n
 from . import transcript as tr
 
 NONE = "（无）"
@@ -146,12 +147,13 @@ class Scratch:
 
 class Tutor:
     def __init__(self, provider: LLMProvider, jobs: JobManager, workspace: Path, language: str = "中文",
-                 retrieval: bool = True):
+                 retrieval: bool = True, locale: str = i18n.DEFAULT_LOCALE):
         self.provider = provider
         self.jobs = jobs
         self.workspace = Path(workspace)
         self.prompts = Prompts(workspace)
-        self.language = language
+        self.language = language  # Claude's output language; the server changes it with the UI language (§9.3)
+        self.locale = locale  # interface language, for the few user-visible strings made here
         # Q&A may Grep/Read the whole course (§8, M6) — only with a provider that has tools.
         self.retrieval = retrieval and getattr(provider, "supports_tools", True)
 
@@ -210,7 +212,7 @@ class Tutor:
                     break
                 job.emit({"type": "reset"})
                 feedback = ("## 上一次的结果有问题，请修正\n\n" + "\n".join(f"- {p}" for p in problems))
-            tree = repair_tree(done.data, n, fallback_title=course.title)
+            tree = repair_tree(done.data, n, fallback_title=course.title, locale=self.locale)
             course.set_tree(tree)
             job.emit({"type": "done", "tree": tree})
 
@@ -320,7 +322,10 @@ class Tutor:
             sid = course.get_session(page)
             if sid:
                 try:
-                    done = await self._stream(job, current, current_images, SessionRef(sid, new=False), None, **qa)
+                    # The session's system prompt fixed a language when it was opened; restate it in
+                    # case the interface language changed since (§9.3). Not stored, not in the drawer.
+                    resumed = f"{current}\n\n（用{self.language}回答。）"
+                    done = await self._stream(job, resumed, current_images, SessionRef(sid, new=False), None, **qa)
                 except SessionNotFound:
                     job.emit({"type": "reset"})  # rebuild below
             if done is None:
@@ -452,7 +457,7 @@ def tree_problems(data: Any, n: int) -> list[str]:
     return problems
 
 
-def repair_tree(data: Any, n: int, fallback_title: str = "") -> dict:
+def repair_tree(data: Any, n: int, fallback_title: str = "", locale: str = i18n.DEFAULT_LOCALE) -> dict:
     """Force a tree into shape: every page 1..n in exactly one topic, topics non-empty, pages sorted."""
     data = data if isinstance(data, dict) else {}
     seen: set[int] = set()
@@ -466,10 +471,10 @@ def repair_tree(data: Any, n: int, fallback_title: str = "") -> dict:
                 pages.append(p)
                 seen.add(p)
         if pages:
-            topics.append({"title": str(t.get("title") or "未命名主题").strip(),
+            topics.append({"title": str(t.get("title") or i18n.tr(locale, "untitled_topic")).strip(),
                            "summary": str(t.get("summary") or "").strip(), "slides": pages})
     if not topics:
-        topics = [{"title": "全部 slides", "summary": "", "slides": []}]
+        topics = [{"title": i18n.tr(locale, "all_slides"), "summary": "", "slides": []}]
     for p in range(1, n + 1):
         if p in seen:
             continue

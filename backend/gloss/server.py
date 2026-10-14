@@ -23,6 +23,7 @@ from . import schema
 from .config import Config, app_dir
 from .doctor import auth_status
 from .export import export_markdown
+from .i18n import LANGUAGE_FOR, Prefs
 from .ingest import IngestError, create_course
 from .jobs import JobManager
 from .providers import LLMProvider
@@ -128,6 +129,10 @@ class NoteBody(BaseModel):
     content: str
 
 
+class PrefsBody(BaseModel):
+    ui_language: str
+
+
 # --- serialization ------------------------------------------------------------------
 
 def slide_aspect(c: Course) -> float:
@@ -190,7 +195,14 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     if provider is None:
         provider = make_provider(config)
     jobs = JobManager(config.concurrency)
-    tutor = Tutor(provider, jobs, config.workspace, language=config.language, retrieval=config.qa_retrieval)
+    prefs = Prefs(app_dir() / "prefs.json")
+
+    def claude_language() -> str:
+        # config.toml pins it; otherwise it follows the interface language (§9.3)
+        return config.language or LANGUAGE_FOR[prefs.locale]
+
+    tutor = Tutor(provider, jobs, config.workspace, language=claude_language(), retrieval=config.qa_retrieval,
+                  locale=prefs.locale)
     library = Library(config.library, app_dir() / "recent.json")
 
     @asynccontextmanager
@@ -234,8 +246,24 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         if claude and time.monotonic() - auth_cache["at"] > 30:
             st = auth_status(claude)
             auth_cache.update(at=time.monotonic(), value=None if st is None else bool(st.get("loggedIn")))
-        return {"provider": config.provider, "model": config.model, "language": config.language,
+        return {"provider": config.provider, "model": config.model, "language": tutor.language,
                 "claude_found": bool(claude), "logged_in": auth_cache["value"] if claude else False}
+
+    def prefs_dict() -> dict[str, Any]:
+        return {"ui_language": prefs.ui_language, "language": tutor.language, "language_pinned": bool(config.language)}
+
+    @app.get("/api/prefs")
+    def get_prefs():
+        return prefs_dict()
+
+    @app.put("/api/prefs")
+    def put_prefs(body: PrefsBody):
+        try:
+            prefs.set_ui_language(body.ui_language)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        tutor.language, tutor.locale = claude_language(), prefs.locale
+        return prefs_dict()
 
     @app.get("/api/recent")
     def recent():
@@ -273,7 +301,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     def export(cid: str):
         c = library.get(cid)
         name = f"{c.path.stem}.md"
-        return Response(export_markdown(c), media_type="text/markdown; charset=utf-8",
+        return Response(export_markdown(c, prefs.locale), media_type="text/markdown; charset=utf-8",
                         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     @app.post("/api/courses/{cid}/transcript")

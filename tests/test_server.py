@@ -214,7 +214,37 @@ def test_export_endpoint(env):
     r = client.get(f"/api/courses/{c['id']}/export.md")
     assert r.headers["content-type"].startswith("text/markdown")
     assert "filename*=UTF-8''%E7%AC%AC%E4%B8%83%E8%AE%B2.md" in r.headers["content-disposition"]
-    assert r.text.startswith("# 第七讲") and "**笔记**\n\n记住" in r.text
+    assert r.text.startswith("# 第七讲") and "**Notes**\n\n记住" in r.text
+
+
+def test_prefs_switch_interface_and_claude_language(env):
+    client, provider, tmp_path = env
+    # English by default
+    assert client.get("/api/prefs").json() == {"ui_language": None, "language": "English", "language_pinned": False}
+    assert client.put("/api/prefs", json={"ui_language": "fr"}).status_code == 422
+    r = client.put("/api/prefs", json={"ui_language": "zh"}).json()
+    assert r == {"ui_language": "zh", "language": "中文", "language_pinned": False}
+    assert json.loads((tmp_path / "home" / "prefs.json").read_text()) == {"ui_language": "zh"}
+    client.put("/api/prefs", json={"ui_language": "en"})
+
+    c = import_deck(client)
+    job = client.post(f"/api/courses/{c['id']}/slides/1/explanation").json()["job"]
+    sse(client, job["id"])
+    assert "English" in provider.calls[-1].prompt  # explanation language follows the interface
+    client.put(f"/api/courses/{c['id']}/slides/1/note", json={"content": "remember"})
+    md = client.get(f"/api/courses/{c['id']}/export.md").text
+    assert "**Explanation**" in md and "**Notes**\n\nremember" in md
+    assert "## Slide 1 · " in md
+
+
+def test_pinned_language_ignores_interface(tmp_path, monkeypatch):
+    monkeypatch.setenv("GLOSS_HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "prefs.json").write_text('{"ui_language": "en"}')
+    cfg = Config(workspace=REPO_ROOT / "claude_workspace", library=tmp_path / "lib", model="fake", language="中文")
+    with TestClient(create_app(cfg, FakeProvider())) as client:
+        assert client.get("/api/prefs").json() == {"ui_language": "en", "language": "中文", "language_pinned": True}
+        assert client.put("/api/prefs", json={"ui_language": "zh"}).json()["language"] == "中文"
 
 
 def test_health_reports_login(env, monkeypatch):

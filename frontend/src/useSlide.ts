@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, followJob, type Explanation, type JobEvent, type JobInfo, type Rect, type SlideData, type Thread } from './api'
+import type { Messages } from './i18n'
 
 /** Live state of one answer being generated for a thread. */
 export interface AnswerStream {
@@ -7,15 +8,15 @@ export interface AnswerStream {
   status: 'queued' | 'answering' | 'error'
   text: string
   error?: string
-  activity?: string // what Claude is looking at right now (whole-course retrieval)
+  activity?: string // `tool` event target: what Claude is looking at right now (whole-course retrieval)
 }
 
 /** Human-readable form of a `tool` event target. */
-export function describeTool(target: string): string {
-  if (target.startsWith('page:')) return `正在查看第 ${target.slice(5)} 页…`
-  if (target.startsWith('search:')) return `正在课件里搜索「${target.slice(7)}」…`
-  if (target === 'course') return '正在查阅整门课的内容…'
-  return '正在查阅课件…'
+export function describeTool(target: string, t: Messages): string {
+  if (target.startsWith('page:')) return t.toolPage(target.slice(5))
+  if (target.startsWith('search:')) return t.toolSearch(target.slice(7))
+  if (target === 'course') return t.toolCourse
+  return t.toolFiles
 }
 
 export type ExplainState =
@@ -60,7 +61,7 @@ export function useSlide(cid: string, page: number, onCourseChanged: () => void)
           case 'queued': return { ...s, [tid]: { ...cur, status: 'queued' } }
           case 'start': return { ...s, [tid]: { ...cur, status: 'answering' } }
           case 'delta': return { ...s, [tid]: { ...cur, status: 'answering', text: cur.text + ev.text, activity: undefined } }
-          case 'tool': return { ...s, [tid]: { ...cur, status: 'answering', activity: describeTool(ev.target) } }
+          case 'tool': return { ...s, [tid]: { ...cur, status: 'answering', activity: ev.target } }
           case 'reset': return { ...s, [tid]: { ...cur, text: '' } }
           case 'error': return { ...s, [tid]: { ...cur, status: 'error', error: ev.message } }
           default: return s

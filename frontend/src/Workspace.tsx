@@ -6,6 +6,7 @@ import {
   appendNote, clamp, DEFAULT_LAYOUT, fitWidth, gridFor, normalizeLayout, noteClip, SPLIT_MAX, SPLIT_MIN, type Box,
   type Layout,
 } from './geometry'
+import { LangSwitch, useT } from './i18n'
 import { Icon } from './Icon'
 import { LayoutMenu } from './LayoutMenu'
 import { Markdown } from './Markdown'
@@ -22,6 +23,7 @@ export default function Workspace({ course, page, onCourseChanged }: {
   onCourseChanged: () => void
 }) {
   const cid = course.id
+  const m = useT()
   const pageCount = course.slide_count
   const valid = page >= 1 && page <= pageCount
   useEffect(() => {
@@ -133,42 +135,43 @@ export default function Workspace({ course, page, onCourseChanged }: {
   const messageCount = s.threads.reduce((n, t) => n + t.messages.length, 0)
 
   const topic = course.tree?.children.find((c) => c.slides.includes(page))
-  const pageTitle = s.slide?.text.split('\n').find((l) => l.trim())?.trim() || `第 ${page} 页`
+  const pageTitle = s.slide?.text.split('\n').find((l) => l.trim())?.trim() || m.page(page)
 
-  const clip = (tid: string, m: Message) => {
+  const clip = (tid: string, msg: Message) => {
     const t = s.threads.find((x) => x.id === tid)!
-    const q = [...t.messages].filter((x) => x.role === 'user' && x.id < m.id).pop()
-    note.set(appendNote(note.value, noteClip(t.n, q?.content ?? '', m.content)), true)
+    const q = [...t.messages].filter((x) => x.role === 'user' && x.id < msg.id).pop()
+    note.set(appendNote(note.value, noteClip(t.n, q?.content ?? '', msg.content, m)), true)
     if (!layout.showNotes) setLayout({ ...layout, showNotes: true })
     const el = notesPane.current
     if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash') }
-    showToast(`已摘到第 ${page} 页的笔记`)
+    showToast(m.clipped(page))
   }
 
   return (
     <div id="app" className="full">
       <header className="bar">
-        <button className="btn ghost" onClick={() => go({ name: 'overview', cid })}><Icon name="back" />导图</button>
+        <button className="btn ghost" onClick={() => go({ name: 'overview', cid })}><Icon name="back" />{m.map}</button>
         <div className="crumb">
           <span className="sec">{topic?.title ?? course.title}</span>
           <span className="ttl">{pageTitle}</span>
         </div>
         <span className="spacer" />
         <div className="pager">
-          <button className="btn ghost" aria-label="上一页" disabled={page <= 1} onClick={() => goPage(page - 1)}><Icon name="back" /></button>
+          <button className="btn ghost" aria-label={m.prevPage} disabled={page <= 1} onClick={() => goPage(page - 1)}><Icon name="back" /></button>
           <span className="count">{page} / {pageCount}</span>
-          <button className="btn ghost" aria-label="下一页" disabled={page >= pageCount} onClick={() => goPage(page + 1)}><Icon name="next" /></button>
+          <button className="btn ghost" aria-label={m.nextPage} disabled={page >= pageCount} onClick={() => goPage(page + 1)}><Icon name="next" /></button>
         </div>
         <span className="vsep wide-only" />
         <LayoutMenu layout={layout} onChange={setLayout} />
-        <button className="btn ghost" aria-pressed={drawer} onClick={() => setDrawer(!drawer)}><Icon name="log" />后台 session</button>
+        <button className="btn ghost" aria-pressed={drawer} onClick={() => setDrawer(!drawer)}><Icon name="log" /><span className="wide-only">{m.sessionDrawer}</span></button>
+        <LangSwitch />
       </header>
 
       <div className="ws" ref={wsRef} style={grid.ws}>
         <section className="pane slide-pane" aria-label="Slide" ref={paneRef}>
-          <p className="hint"><Icon name="select" />在 slide 上拖动框选任意区域，比如一个公式，就能针对它提问</p>
+          <p className="hint"><Icon name="select" />{m.selectHint}</p>
           {s.loadError ? <p className="err">{s.loadError}</p> : (
-            <Stage ref={stageRef} src={api.imageUrl(cid, page)} alt={`第 ${page} 页 slide：${pageTitle}`}
+            <Stage ref={stageRef} src={api.imageUrl(cid, page)} alt={m.slideAlt(page, pageTitle)}
               width={stageW} threads={s.threads} busy={busy} sel={sel} dragging={dragging}
               onSelect={(r, d) => { setSel(r); setDragging(d) }}
               onOpenThread={(tid) => { s.setMinimized(tid, false); front(tid) }}
@@ -176,23 +179,23 @@ export default function Workspace({ course, page, onCourseChanged }: {
           )}
         </section>
         <Splitter which="a" axis={grid.splitAAxis} hidden={!grid.showGroup} layout={layout} setLayout={setLayout}
-          container={wsRef} label="调整 slide 和下方区域的大小" />
+          container={wsRef} label={m.resizeSlide} />
         <div className="group" ref={groupRef} style={grid.group} hidden={!grid.showGroup}>
-          <section className="pane panel" aria-label="讲解" hidden={!layout.showExplain} ref={explainPane}>
+          <section className="pane panel" aria-label={m.explanation} hidden={!layout.showExplain} ref={explainPane}>
             <div className="phead">
-              <h2>讲解</h2>
+              <h2>{m.explanation}</h2>
               <span className="meta">{[
-                s.explain.status === 'done' && s.explain.explanation.model ? `由 ${s.explain.explanation.model} 生成` : '',
-                !course.transcript ? '没有上传 transcript，讲解只基于 slide 内容'
-                  : s.slide?.transcript_span ? '这一页有对应的 transcript 段落' : 'transcript 里没有对应这一页的内容',
+                s.explain.status === 'done' && s.explain.explanation.model ? m.generatedBy(s.explain.explanation.model) : '',
+                !course.transcript ? m.noTranscript
+                  : s.slide?.transcript_span ? m.hasSpan : m.noSpan,
               ].filter(Boolean).join(' · ')}</span>
               <span className="acts">
                 {s.slide?.transcript_span && (
                   <button className="linkbtn" aria-pressed={showSpan} onClick={() => setShowSpan(!showSpan)}>
-                    {showSpan ? '收起 transcript' : 'transcript 片段'}</button>
+                    {showSpan ? m.hideSpan : m.showSpan}</button>
                 )}
                 {s.explain.status === 'done' && (
-                  <button className="linkbtn" onClick={() => s.generate(true)}><Icon name="refresh" />重新生成</button>
+                  <button className="linkbtn" onClick={() => s.generate(true)}><Icon name="refresh" />{m.regenerate}</button>
                 )}
               </span>
             </div>
@@ -202,12 +205,12 @@ export default function Workspace({ course, page, onCourseChanged }: {
                 <ExplainBody st={s.explain} onGenerate={() => s.generate()} />
               </div>
               {s.threads.some((t) => t.quote) && (
-                <div className="qchips" aria-label="关于讲解的提问">
+                <div className="qchips" aria-label={m.explainQuestions}>
                   {s.threads.filter((t) => t.quote).map((t) => (
-                    <button key={t.id} className="qchip" title={titleOf(t)}
+                    <button key={t.id} className="qchip" title={titleOf(t, m.newQuestion)}
                       onClick={() => { s.setMinimized(t.id, !t.minimized); front(t.id) }}>
                       <span className={'pin' + (busy.has(t.id) ? ' busy' : '')}>{t.n}</span>
-                      <span className="qchip-t">{titleOf(t)}</span>
+                      <span className="qchip-t">{titleOf(t, m.newQuestion)}</span>
                     </button>
                   ))}
                 </div>
@@ -215,11 +218,11 @@ export default function Workspace({ course, page, onCourseChanged }: {
             </div>
           </section>
           <Splitter which="b" axis={grid.splitBAxis} hidden={!grid.showSplitB} layout={layout} setLayout={setLayout}
-            container={groupRef} label="调整讲解和笔记的大小" />
-          <section className="pane panel" aria-label="笔记" hidden={!layout.showNotes} ref={notesPane}>
-            <div className="phead"><h2>笔记</h2><span className="meta">{note.status}</span></div>
-            <textarea className="notes" aria-label={`第 ${page} 页的笔记`} value={note.value}
-              placeholder="这一页的笔记。可以自己写，也可以从问答里把回答摘过来。"
+            container={groupRef} label={m.resizePanels} />
+          <section className="pane panel" aria-label={m.notes} hidden={!layout.showNotes} ref={notesPane}>
+            <div className="phead"><h2>{m.notes}</h2><span className="meta">{note.status && m[note.status]}</span></div>
+            <textarea className="notes" aria-label={m.notesFor(page)} value={note.value}
+              placeholder={m.notesPlaceholder}
               disabled={!s.slide} onChange={(e) => note.set(e.target.value)} />
           </section>
         </div>
@@ -232,7 +235,7 @@ export default function Workspace({ course, page, onCourseChanged }: {
             tick={tick} z={z.of[t.id] ?? 11} onFront={() => front(t.id)}
             onMinimize={() => s.setMinimized(t.id, true)}
             onDelete={() => s.remove(t.id).catch((e) => showToast(String(e.message ?? e)))}
-            onFollowUp={(text) => s.followUp(t.id, text)} onRetry={() => s.retry(t.id)} onClip={(m) => clip(t.id, m)} />
+            onFollowUp={(text) => s.followUp(t.id, text)} onRetry={() => s.retry(t.id)} onClip={(msg) => clip(t.id, msg)} />
         ))}
         {sel && !dragging && (
           <Composer key={`${sel.x},${sel.y}`} anchor={stageAnchor(stageRef, sel)} tick={tick} z={z.top + 1}
@@ -248,7 +251,7 @@ export default function Workspace({ course, page, onCourseChanged }: {
           <button className="btn primary askbtn" style={{ left: textSel.box.left + textSel.box.width / 2, top: textSel.box.top + textSel.box.height + 8 }}
             onMouseDown={(e) => e.preventDefault() /* keep the selection */}
             onClick={() => { setQuoteAsk(textSel); setTextSel(null); document.getSelection()?.removeAllRanges() }}>
-            就这段提问
+            {m.askAboutThis}
           </button>
         )}
         {quoteAsk && (
@@ -268,20 +271,21 @@ export default function Workspace({ course, page, onCourseChanged }: {
 }
 
 function ExplainBody({ st, onGenerate }: { st: ExplainState; onGenerate: () => void }) {
+  const m = useT()
   switch (st.status) {
     case 'done':
       return <Markdown text={st.explanation.content} />
     case 'queued':
-      return <p className="loading">排队中，马上开始生成讲解…</p>
+      return <p className="loading">{m.explainQueued}</p>
     case 'running':
-      return st.text ? <Markdown className="streaming" text={st.text} /> : <p className="loading">Claude 正在生成这一页的讲解…</p>
+      return st.text ? <Markdown className="streaming" text={st.text} /> : <p className="loading">{m.explainRunning}</p>
     case 'error':
-      return <div className="merr" role="alert"><span>讲解生成失败：{st.error}</span><button className="btn" onClick={onGenerate}>重试</button></div>
+      return <div className="merr" role="alert"><span>{m.explainFailed}{st.error}</span><button className="btn" onClick={onGenerate}>{m.retry}</button></div>
     default:
       return (
         <div className="empty">
-          <span>这一页的讲解还没有生成。讲解在第一次打开时生成，之后保存在文件里。</span>
-          <button className="btn primary" onClick={onGenerate}>生成讲解</button>
+          <span>{m.explainNone}</span>
+          <button className="btn primary" onClick={onGenerate}>{m.explainGenerate}</button>
         </div>
       )
   }
@@ -323,10 +327,12 @@ function Splitter({ which, axis, hidden, layout, setLayout, container, label }: 
   )
 }
 
+type NoteStatus = '' | 'noteSaved' | 'noteSaving' | 'noteFailed' // keys into the dictionary
+
 /** One page's note: debounced autosave, flushed when the page changes or the app closes. */
 function useNote(cid: string, page: number, initial: string | undefined) {
   const [value, setValue] = useState('')
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState<NoteStatus>('')
   const pending = useRef<{ page: number; content: string } | null>(null)
   const timer = useRef<number>(undefined)
 
@@ -336,14 +342,14 @@ function useNote(cid: string, page: number, initial: string | undefined) {
     if (!p) return
     pending.current = null
     api.putNote(cid, p.page, p.content)
-      .then(() => setStatus((st) => (pending.current ? st : '已保存')))
-      .catch(() => setStatus('保存失败，请检查后台是否在运行'))
+      .then(() => setStatus((st) => (pending.current ? st : 'noteSaved')))
+      .catch(() => setStatus('noteFailed'))
   }, [cid])
 
   useEffect(() => {
     flush()
     setValue(initial ?? '')
-    setStatus(initial ? '已保存' : '')
+    setStatus(initial ? 'noteSaved' : '')
   }, [page, initial, flush])
   useEffect(() => {
     window.addEventListener('beforeunload', flush)
@@ -352,7 +358,7 @@ function useNote(cid: string, page: number, initial: string | undefined) {
 
   const set = useCallback((content: string, immediate = false) => {
     setValue(content)
-    setStatus('正在保存…')
+    setStatus('noteSaving')
     pending.current = { page, content }
     clearTimeout(timer.current)
     if (immediate) flush()

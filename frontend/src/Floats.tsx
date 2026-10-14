@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { api, type Message, type Thread } from './api'
 import { placePopup, type Box } from './geometry'
+import { useT } from './i18n'
 import { Icon } from './Icon'
 import { Markdown } from './Markdown'
 import { titleOf, type Sel } from './Stage'
-import type { AnswerStream } from './useSlide'
+import { describeTool, type AnswerStream } from './useSlide'
 
 const isNarrow = () => window.matchMedia('(max-width:760px)').matches
 
@@ -63,6 +64,7 @@ export function Composer({ anchor, quote, tick, z, onCancel, onSubmit }: {
   onSubmit: (q: string) => Promise<void>
 }) {
   const [q, setQ] = useState('')
+  const m = useT()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const ta = useRef<HTMLTextAreaElement>(null)
@@ -80,9 +82,9 @@ export function Composer({ anchor, quote, tick, z, onCancel, onSubmit }: {
   }
   return (
     <Popup anchor={anchor} width={320} tick={tick} z={z} className="composer">
-      <label htmlFor="ask">{quote ? '关于选中的这段讲解，你想问什么？' : '关于框选的这块，你想问什么？'}</label>
+      <label htmlFor="ask">{quote ? m.askQuote : m.askRegion}</label>
       {quote && <blockquote className="quote">{quote}</blockquote>}
-      <textarea id="ask" ref={ta} value={q} placeholder="比如：这个公式里的求和范围是什么意思？"
+      <textarea id="ask" ref={ta} value={q} placeholder={m.askPlaceholder}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
@@ -90,8 +92,8 @@ export function Composer({ anchor, quote, tick, z, onCancel, onSubmit }: {
         }} />
       {err && <p className="err">{err}</p>}
       <div className="row">
-        <button className="btn ghost" onClick={onCancel}>取消</button>
-        <button className="btn primary" onClick={submit} disabled={!q.trim() || busy}>提问</button>
+        <button className="btn ghost" onClick={onCancel}>{m.cancel}</button>
+        <button className="btn primary" onClick={submit} disabled={!q.trim() || busy}>{m.ask}</button>
       </div>
     </Popup>
   )
@@ -114,6 +116,7 @@ export function ChatBox({ cid, thread, stream, queuedBehind, anchor, tick, z, on
   onClip: (m: Message) => void
 }) {
   const [draft, setDraft] = useState('')
+  const m = useT()
   const body = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
   const t = thread
@@ -136,52 +139,51 @@ export function ChatBox({ cid, thread, stream, queuedBehind, anchor, tick, z, on
     }
   }
   const busy = !!stream && stream.status !== 'error'
-  const status = stream?.status === 'answering' && stream.activity ? stream.activity
-    : stream?.status === 'answering' && !stream.text ? 'Claude 正在回答…'
-    : stream?.status === 'queued'
-      ? `排队中：这一页的 session 正在回答${queuedBehind ? `问题 ${queuedBehind}` : '另一个问题'}，同一个 session 一次只处理一条消息。`
-      : ''
+  const status = stream?.status === 'answering' && stream.activity ? describeTool(stream.activity, m)
+    : stream?.status === 'answering' && !stream.text ? m.answering
+    : stream?.status === 'queued' ? m.queued(queuedBehind)
+    : ''
 
   return (
     <Popup anchor={anchor} width={360} tick={tick} z={z}
-      className="cbox" role="dialog" aria-label={`问题 ${t.n}`} onPointerDown={onFront}>
+      className="cbox" role="dialog" aria-label={m.question(t.n)} onPointerDown={onFront}>
       <div className="chead">
         <span className="num">{t.n}</span>
         {t.rect ? (
           <img src={api.cropUrl(cid, t.id)} alt="" style={{ height: 36, maxWidth: 96, objectFit: 'contain', flex: 'none',
             borderRadius: 5, border: '1px solid var(--line)', background: '#fff' }} />
         ) : <span className="qsnip" title={t.quote ?? ''}>“{t.quote}”</span>}
-        <span className="ttl">{titleOf(t)}</span>
-        <button className="iconbtn" aria-label="删除这个问题" title="删除" disabled={busy}
-          onClick={() => confirm(`删除问题 ${t.n} 和它的全部回答？`) && onDelete()}><Icon name="trash" /></button>
-        <button className="iconbtn" aria-label="缩小这个问题" title="缩小" onClick={onMinimize}><Icon name="min" /></button>
+        <span className="ttl">{titleOf(t, m.newQuestion)}</span>
+        <button className="iconbtn" aria-label={m.deleteQuestion} title={m.delete} disabled={busy}
+          onClick={() => confirm(m.deleteQuestionConfirm(t.n)) && onDelete()}><Icon name="trash" /></button>
+        <button className="iconbtn" aria-label={m.minimizeQuestion} title={m.minimize} onClick={onMinimize}><Icon name="min" /></button>
       </div>
       <div className="cbody" ref={body}
         onScroll={(e) => { const b = e.currentTarget; nearBottom.current = b.scrollHeight - b.scrollTop - b.clientHeight < 90 }}>
-        {t.messages.map((m) => m.role === 'user'
-          ? <div key={m.id} className="mq">{m.content}</div>
+        {t.messages.map((msg) => msg.role === 'user'
+          ? <div key={msg.id} className="mq">{msg.content}</div>
           : (
-            <div key={m.id}>
-              <Markdown className="ma" text={m.content} />
+            <div key={msg.id}>
+              <Markdown className="ma" text={msg.content} />
               <div className="ma-actions">
-                <button className="linkbtn" onClick={() => onClip(m)}><Icon name="pen" />摘到笔记</button>
+                <button className="linkbtn" onClick={() => onClip(msg)}><Icon name="pen" />{m.clipToNotes}</button>
               </div>
             </div>
           ))}
         {stream?.text && <Markdown className="ma streaming" text={stream.text} />}
         {stream?.status === 'error' && (
           <div className="merr" role="alert">
-            <span>回答失败：{stream.error}</span>
-            <button className="btn" onClick={onRetry}>重试</button>
+            <span>{m.answerFailed}{stream.error}</span>
+            <button className="btn" onClick={onRetry}>{m.retry}</button>
           </div>
         )}
       </div>
       <div className="status" aria-live="polite">{status}</div>
       <div className="cfoot">
-        <input type="text" value={draft} placeholder={busy ? '等这条回答完成后再追问…' : '继续追问…'}
-          aria-label={`在问题 ${t.n} 里继续追问`} onChange={(e) => setDraft(e.target.value)}
+        <input type="text" value={draft} placeholder={busy ? m.followUpWait : m.followUp}
+          aria-label={m.followUpIn(t.n)} onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
-        <button className="send" aria-label="发送追问" onClick={send} disabled={busy || !draft.trim()}><Icon name="send" /></button>
+        <button className="send" aria-label={m.sendFollowUp} onClick={send} disabled={busy || !draft.trim()}><Icon name="send" /></button>
       </div>
     </Popup>
   )

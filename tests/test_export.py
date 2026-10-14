@@ -23,7 +23,7 @@ def test_export_full(tmp_path):
     c.add_message(t.id, "user", "不除呢？")
     c.add_message(t.id, "assistant", "会饱和。")
     c.set_note(3, "记住这个")
-    md = export_markdown(c)
+    md = export_markdown(c, "zh")
     assert md.startswith("# Attention\n\n第 7 讲\n\n3 页。")
     assert "- **公式**（第 2–3 页）缩放点积" in md
     assert "## 公式\n\n*缩放点积*\n\n### 第 2 页 · Scaled dot-product" in md
@@ -37,7 +37,7 @@ def test_export_full(tmp_path):
 
 def test_export_without_tree(tmp_path):
     c = make(tmp_path, tree=False)
-    md = export_markdown(c)
+    md = export_markdown(c, "zh")
     assert "## 目录" not in md
     assert "## 第 1 页 · Attention" in md and "## 第 3 页 · 第 3 页" in md
     c.close()
@@ -50,5 +50,12 @@ def test_generated_headings_nest_under_page(tmp_path):
     assert demote("##### 深", 3) == "###### 深"
     c = make(tmp_path)
     c.add_explanation(2, "## 这一页在讲什么\n内容")
-    assert "##### 这一页在讲什么" in export_markdown(c)
+    assert "##### 这一页在讲什么" in export_markdown(c, "zh")
     c.close()
+
+
+def test_export_english_labels(course):
+    c = course
+    c.set_note(1, "remember")
+    md = export_markdown(c)  # English is the default interface language
+    assert "slides. Exported from Gloss." in md and "## Slide 1 · " in md and "**Notes**\n\nremember" in md

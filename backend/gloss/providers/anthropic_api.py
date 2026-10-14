@@ -134,21 +134,21 @@ class AnthropicAPIProvider:
                         yield TextDelta(event.delta.text)
                 final = await stream.get_final_message()
         except anthropic.AuthenticationError as e:
-            raise ProviderError("API key 无效（401）。检查 ANTHROPIC_API_KEY。") from e
+            raise ProviderError("invalid API key (401): check ANTHROPIC_API_KEY") from e
         except anthropic.PermissionDeniedError as e:
-            raise ProviderError(f"API key 没有权限（403）：{e.message}") from e
+            raise ProviderError(f"API key not permitted (403): {e.message}") from e
         except anthropic.RateLimitError as e:
-            raise ProviderError("API 限流（429），请稍后重试。") from e
+            raise ProviderError("rate limited by the API (429); try again shortly") from e
         except anthropic.APIStatusError as e:
             if e.status_code == 529 or e.status_code >= 500:
-                raise ProviderError(f"Anthropic 服务暂时不可用（{e.status_code}），请稍后重试。") from e
-            raise ProviderError(f"API 错误（{e.status_code}）：{e.message}") from e
+                raise ProviderError(f"Anthropic API temporarily unavailable ({e.status_code}); try again shortly") from e
+            raise ProviderError(f"API error ({e.status_code}): {e.message}") from e
         except anthropic.APIConnectionError as e:
-            raise ProviderError("连不上 Anthropic API，请检查网络。") from e
+            raise ProviderError("cannot reach the Anthropic API; check your network") from e
 
         if final.stop_reason == "refusal":
             details = getattr(final, "stop_details", None)
-            raise ProviderError(f"Claude 拒绝回答这个请求（{getattr(details, 'category', None) or 'refusal'}）。")
+            raise ProviderError(f"Claude declined this request ({getattr(details, 'category', None) or 'refusal'})")
         blocks = list(final.content)
         last_fallback = max((i for i, b in enumerate(blocks) if b.type == "fallback"), default=-1)
         text = "".join(b.text for b in blocks[last_fallback + 1:] if b.type == "text")

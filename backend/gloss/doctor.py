@@ -100,7 +100,7 @@ def run_checks(cfg: Config | None = None, live: bool = False) -> list[Check]:
         try:
             cfg = Config.load()
             p = config_path()
-            checks.append(Check("ok", "config", f"{p} (model {cfg.model}, language {cfg.language})" if p.exists()
+            checks.append(Check("ok", "config", f"{p} (model {cfg.model}, language {cfg.language or 'follows the interface'})" if p.exists()
                                 else f"defaults (model {cfg.model}); create {p} to change them"))
         except Exception as e:  # noqa: BLE001
             checks.append(Check("fail", "config", str(e)))
