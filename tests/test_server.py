@@ -205,3 +205,22 @@ def test_tree_endpoint_and_summary(env):
     assert evs[-1]["tree"]["children"][0]["slides"] == [1, 2, 3]
     assert client.post(f"/api/courses/{c['id']}/tree").json() == {"tree": evs[-1]["tree"]}
     assert client.get(f"/api/courses/{c['id']}").json()["tree"]["title"] == "Attention"
+
+
+def test_export_endpoint(env):
+    client, _, _ = env
+    c = import_deck(client, name="第七讲.pdf")
+    client.put(f"/api/courses/{c['id']}/slides/1/note", json={"content": "记住"})
+    r = client.get(f"/api/courses/{c['id']}/export.md")
+    assert r.headers["content-type"].startswith("text/markdown")
+    assert "filename*=UTF-8''%E7%AC%AC%E4%B8%83%E8%AE%B2.md" in r.headers["content-disposition"]
+    assert r.text.startswith("# 第七讲") and "**笔记**\n\n记住" in r.text
+
+
+def test_health_reports_login(env, monkeypatch):
+    client, _, _ = env
+    import gloss.server as server
+    monkeypatch.setattr(server, "find_claude", lambda: "/bin/claude")
+    monkeypatch.setattr(server, "auth_status", lambda _: {"loggedIn": False})
+    h = client.get("/api/health").json()
+    assert h["claude_found"] is True and h["logged_in"] is False

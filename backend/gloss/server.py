@@ -6,6 +6,8 @@ import json
 import re
 import tempfile
 import threading
+import time
+from urllib.parse import quote
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -19,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from . import schema
 from .config import Config, app_dir
+from .doctor import auth_status
+from .export import export_markdown
 from .ingest import IngestError, create_course
 from .jobs import JobManager
 from .providers import LLMProvider
@@ -200,10 +204,16 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
 
     # --- app-level ---
 
+    auth_cache: dict[str, Any] = {"at": -1e9, "value": None}
+
     @app.get("/api/health")
     def health():
+        claude = config.claude_bin or find_claude()
+        if claude and time.monotonic() - auth_cache["at"] > 30:
+            st = auth_status(claude)
+            auth_cache.update(at=time.monotonic(), value=None if st is None else bool(st.get("loggedIn")))
         return {"provider": config.provider, "model": config.model, "language": config.language,
-                "claude_found": bool(config.claude_bin or find_claude())}
+                "claude_found": bool(claude), "logged_in": auth_cache["value"] if claude else False}
 
     @app.get("/api/recent")
     def recent():
@@ -236,6 +246,13 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     @app.get("/api/courses/{cid}")
     async def get_course(cid: str):
         return course_summary(library.get(cid), jobs)
+
+    @app.get("/api/courses/{cid}/export.md")
+    def export(cid: str):
+        c = library.get(cid)
+        name = f"{c.path.stem}.md"
+        return Response(export_markdown(c), media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     @app.post("/api/courses/{cid}/tree")
     async def build_tree(cid: str, regenerate: bool = False):
