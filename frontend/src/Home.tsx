@@ -4,7 +4,7 @@ import { Brand } from './Icon'
 
 export default function Home({ onOpen, notice }: { onOpen: (c: Course) => void; notice?: string }) {
   const [recent, setRecent] = useState<RecentItem[]>([])
-  const [health, setHealth] = useState<{ claude_found: boolean; model: string } | null>(null)
+  const [health, setHealth] = useState<{ claude_found: boolean; logged_in: boolean | null; model: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [over, setOver] = useState(false)
@@ -44,6 +44,9 @@ export default function Home({ onOpen, notice }: { onOpen: (c: Course) => void; 
         {notice && <p className="warn">{notice}</p>}
         {health && !health.claude_found && (
           <p className="warn">没有找到 <code>claude</code> 命令。可以浏览已有内容，但不能生成讲解或提问。请先安装 Claude Code 并登录。</p>
+        )}
+        {health?.claude_found && health.logged_in === false && (
+          <p className="warn">Claude Code 还没有登录。在终端运行 <code>claude</code> 并用 /login 登录后，才能生成讲解和提问。</p>
         )}
         <section className="card">
           <h2>导入课件</h2>

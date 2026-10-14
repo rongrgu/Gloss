@@ -117,7 +117,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const c = (cid: string) => `/api/courses/${encodeURIComponent(cid)}`
 
 export const api = {
-  health: () => req<{ provider: string; model: string; claude_found: boolean }>('GET', '/api/health'),
+  health: () => req<{ provider: string; model: string; claude_found: boolean; logged_in: boolean | null }>('GET', '/api/health'),
   recent: () => req<RecentItem[]>('GET', '/api/recent'),
   importPdf: (file: File) => {
     const fd = new FormData()
@@ -129,6 +129,7 @@ export const api = {
   buildTree: (cid: string, regenerate = false) =>
     req<{ tree?: Tree; job?: JobInfo }>('POST', `${c(cid)}/tree${regenerate ? '?regenerate=true' : ''}`),
   slide: (cid: string, page: number) => req<SlideData>('GET', `${c(cid)}/slides/${page}`),
+  exportUrl: (cid: string) => `${c(cid)}/export.md`,
   imageUrl: (cid: string, page: number) => `${c(cid)}/slides/${page}/image`,
   cropUrl: (cid: string, tid: string) => `${c(cid)}/threads/${tid}/crop`,
   explain: (cid: string, page: number, regenerate = false) =>

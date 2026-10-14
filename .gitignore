@@ -26,7 +26,7 @@ htmlcov/
 # --- Frontend ---
 node_modules/
 frontend/dist/
-backend/gloss/static/
+# backend/gloss/static/ is committed: the built frontend ships with the repo (see scripts/frontend_hash.py)
 
 # --- Editors / OS ---
 .DS_Store

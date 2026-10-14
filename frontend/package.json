@@ -9,7 +9,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "postbuild": "uv run --no-project python ../scripts/frontend_hash.py --write"
   },
   "dependencies": {
     "@xyflow/react": "^12.12.0",

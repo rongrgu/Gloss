@@ -28,6 +28,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["backend/gloss"]
 
+# Runtime prompts ship inside the package; installed copies seed ~/.gloss/workspace (config.py).
+[tool.hatch.build.targets.wheel.force-include]
+"claude_workspace/CLAUDE.md" = "gloss/_workspace/CLAUDE.md"
+"claude_workspace/prompts" = "gloss/_workspace/prompts"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [

@@ -52,6 +52,8 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
         <span className="file" title={course.path}>{course.title}</span>
         <span className="spacer" />
         <span className="saved wide-only">所有内容自动保存</span>
+        <a className="btn ghost" href={api.exportUrl(course.id)} download style={{ textDecoration: 'none' }}
+          title="把思维导图、讲解、问答和笔记导出成一个 Markdown 文件">导出 Markdown</a>
         {hasTree && (
           <button className="btn ghost" disabled={st.status === 'building'}
             onClick={() => confirm('让 Claude 重新整理思维导图？现有的主题划分会被替换（问答和笔记不受影响）。')
