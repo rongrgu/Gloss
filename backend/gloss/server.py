@@ -122,10 +122,22 @@ class NoteBody(BaseModel):
 
 # --- serialization ------------------------------------------------------------------
 
-def course_summary(c: Course) -> dict[str, Any]:
+def slide_aspect(c: Course) -> float:
+    """Width / height of the rendered slides (from slide 1's PNG header), so thumbnails can be laid out before loading."""
+    img = c.get_slide_image(1)
+    if not img or img[:8] != b"\x89PNG\r\n\x1a\n":
+        return 16 / 9
+    w, h = int.from_bytes(img[16:20], "big"), int.from_bytes(img[20:24], "big")
+    return w / h if h else 16 / 9
+
+
+def course_summary(c: Course, jobs: JobManager | None = None) -> dict[str, Any]:
+    tree_job = jobs.get(f"{c.id}:tree") if jobs else None
     return {
         "id": c.id, "title": c.title, "path": str(c.path), "slide_count": c.slide_count(),
-        "tree": c.get_tree(), "question_counts": c.thread_counts(), "pages_with_notes": sorted(c.pages_with_notes()),
+        "aspect": round(slide_aspect(c), 4),
+        "tree": c.get_tree(), "tree_job": tree_job.to_dict() if tree_job and not tree_job.finished else None,
+        "question_counts": c.thread_counts(), "pages_with_notes": sorted(c.pages_with_notes()),
     }
 
 
@@ -210,20 +222,26 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
                 course = create_course(pdf, out, title=title or None)
             except IngestError as e:
                 raise HTTPException(422, str(e)) from e
-        return course_summary(library.add(course))
+        return course_summary(library.add(course), jobs)
 
     @app.post("/api/courses/open")
     def open_course(body: OpenBody):
         try:
-            return course_summary(library.open(Path(body.path)))
+            return course_summary(library.open(Path(body.path)), jobs)
         except FileNotFoundError as e:
             raise HTTPException(404, "file not found") from e
         except (schema.NotAGlossFile, schema.FileTooNew) as e:
             raise HTTPException(422, str(e)) from e
 
     @app.get("/api/courses/{cid}")
-    def get_course(cid: str):
-        return course_summary(library.get(cid))
+    async def get_course(cid: str):
+        return course_summary(library.get(cid), jobs)
+
+    @app.post("/api/courses/{cid}/tree")
+    async def build_tree(cid: str, regenerate: bool = False):
+        c = library.get(cid)
+        job = tutor.build_tree(c, regenerate=regenerate)
+        return {"tree": c.get_tree()} if job is None else {"job": job.to_dict()}
 
     @app.post("/api/courses/{cid}/close")
     def close_course(cid: str):

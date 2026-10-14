@@ -33,11 +33,17 @@ with sync_playwright() as p:
     with pg.expect_file_chooser() as fc:
         pg.click(".drop")
     fc.value.set_files(str(S / "attention.pdf"))
-    pg.wait_for_selector(".grid .thumb", timeout=20000)
-    pg.screenshot(path=shots / "02-overview.png")
-    step(f"overview: {pg.locator('.grid .thumb').count()} thumbs")
+    pg.wait_for_selector(".grid .thumb", timeout=20000)  # shown while the mind map is generated
+    step("tree generating; waiting for mind map")
+    pg.wait_for_selector(".react-flow .snode", timeout=180000)
+    pg.wait_for_timeout(500)
+    pg.screenshot(path=shots / "02-map.png")
+    step(f"map: {pg.locator('.snode').count()} topics, {pg.locator('.react-flow .thumb').count()} thumbs")
+    pg.locator(".snode").first.click(); pg.wait_for_selector(".react-flow .more")
+    pg.locator(".react-flow .more").click(); pg.wait_for_selector(".react-flow .more", state="detached")
+    step("collapse / expand ok")
 
-    pg.locator(".grid .thumb").nth(1).click()
+    pg.locator(".react-flow .thumb[aria-label^='第 2 页']").click()
     pg.wait_for_selector(".stage img")
     pg.screenshot(path=shots / "03-slide-loading.png")
     step("slide 2 open; waiting for explanation")
@@ -101,11 +107,12 @@ with sync_playwright() as p:
     pg.screenshot(path=shots / "11-after-reload.png")
     step("persistence ok")
     # keyboard nav
-    pg.keyboard.press("ArrowRight"); pg.wait_for_selector("text=3 / 3")
-    pg.keyboard.press("ArrowLeft"); pg.wait_for_selector("text=2 / 3")
+    count = "document.querySelector('.count').textContent.trim().startsWith"
+    pg.keyboard.press("ArrowRight"); pg.wait_for_function(f"{count}('3 /')")
+    pg.keyboard.press("ArrowLeft"); pg.wait_for_function(f"{count}('2 /')")
     step("keyboard nav ok")
     # overview badge
-    pg.click("text=导图"); pg.wait_for_selector(".grid .badge")
+    pg.click("text=导图"); pg.wait_for_selector(".react-flow .badge")
     pg.screenshot(path=shots / "12-overview-badges.png")
     step("overview badge ok")
 
@@ -114,6 +121,7 @@ with sync_playwright() as p:
     q = d.new_page(); q.on("pageerror", lambda e: log.append(f"narrow pageerror: {e}"))
     q.goto(URL + "#" + pg.url.split("#")[1] + "/p/2")
     q.wait_for_selector(".stage img"); q.wait_for_timeout(800)
+    assert q.locator(".marker").count() == 1
     q.screenshot(path=shots / "13-narrow-dark.png", full_page=True)
     q.click(".marker"); q.wait_for_selector(".cbox"); q.wait_for_timeout(300)
     q.screenshot(path=shots / "14-narrow-chat.png")

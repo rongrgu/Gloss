@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class Done:
     session_id: str | None
     model: str | None = None
     cost_usd: float | None = None
+    data: Any = None  # parsed structured output when a json_schema was given
 
 
 Event = TextDelta | Reset | Done
@@ -51,8 +52,10 @@ class LLMProvider(Protocol):
         images: list[Path] = (),
         session: SessionRef | None = None,
         system: str | None = None,
+        json_schema: dict | None = None,
     ) -> AsyncIterator[Event]:
         """Stream one turn. `system` only takes effect when the session is new (or session is None).
+        With `json_schema`, the reply is validated against it and returned parsed in `Done.data`.
 
         The last event is always `Done`; failures raise `ProviderError`.
         """

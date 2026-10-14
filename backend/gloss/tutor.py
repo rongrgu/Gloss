@@ -14,6 +14,27 @@ from .providers import Done, LLMProvider, ProviderError, Reset, SessionNotFound,
 from .store import Course, Message, Thread
 
 NONE = "（无）"
+TREE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "subtitle": {"type": "string"},
+        "children": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "slides": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["title", "summary", "slides"],
+            },
+        },
+    },
+    "required": ["title", "children"],
+}
+SLIDE_TEXT_LIMIT = 1500  # chars per slide sent for tree building
 COVER_FRACTION = 0.3  # a text block counts as selected if this much of it is inside the rect
 
 
@@ -137,6 +158,36 @@ class Tutor:
                                                       "created_at": e.created_at}})
 
         return self.jobs.submit(f"{course.id}:explain:{page}", "explain", None, run, {"page": page})
+
+    # --- mind map tree (§5.2) ---------------------------------------------
+
+    def build_tree(self, course: Course, regenerate: bool = False) -> Job | None:
+        """Start (or join) building the mind map. None if one exists and not regenerating."""
+        if not regenerate and course.get_tree():
+            return None
+        n = course.slide_count()
+
+        async def run(job: Job) -> None:
+            slides = "\n\n".join(
+                f"### 第 {p} 页\n{(t.strip()[:SLIDE_TEXT_LIMIT] or '（这一页没有可抽取的文字）')}"
+                for p, t in course.slide_texts()
+            )
+            values = dict(course_title=course.title, page_count=n, slides=slides, language=self.language)
+            feedback = ""
+            for attempt in range(2):
+                prompt = self.prompts.render("build-tree", **values, feedback=feedback)
+                done = await self._stream(job, prompt, [], session=None, system=self.prompts.role(),
+                                          json_schema=TREE_SCHEMA)
+                problems = tree_problems(done.data, n)
+                if not problems:
+                    break
+                job.emit({"type": "reset"})
+                feedback = ("## 上一次的结果有问题，请修正\n\n" + "\n".join(f"- {p}" for p in problems))
+            tree = repair_tree(done.data, n, fallback_title=course.title)
+            course.set_tree(tree)
+            job.emit({"type": "done", "tree": tree})
+
+        return self.jobs.submit(f"{course.id}:tree", "tree", None, run)
 
     def _outline(self, course: Course) -> str:
         tree = course.get_tree()
@@ -265,8 +316,9 @@ class Tutor:
     # --- streaming ----------------------------------------------------------
 
     async def _stream(self, job: Job, prompt: str, images: list[Path], session: SessionRef | None,
-                      system: str | None) -> Done:
-        async for ev in self.provider.run(prompt, images=images, session=session, system=system):
+                      system: str | None, json_schema: dict | None = None) -> Done:
+        kw = {"json_schema": json_schema} if json_schema is not None else {}
+        async for ev in self.provider.run(prompt, images=images, session=session, system=system, **kw):
             if isinstance(ev, TextDelta):
                 job.emit({"type": "delta", "text": ev.text})
             elif isinstance(ev, Reset):
@@ -274,6 +326,64 @@ class Tutor:
             elif isinstance(ev, Done):
                 return ev
         raise ProviderError("provider ended without a result")
+
+
+def tree_problems(data: Any, n: int) -> list[str]:
+    """What is wrong with a generated tree, in words Claude can act on. Empty if valid."""
+    if not isinstance(data, dict) or not isinstance(data.get("children"), list):
+        return ["结果不是 {title, children: [...]} 的结构"]
+    topics = [t for t in data["children"] if isinstance(t, dict)]
+    if not topics:
+        return ["没有任何主题"]
+    problems = []
+    seen: dict[int, str] = {}
+    for t in topics:
+        pages = [p for p in t.get("slides") or [] if isinstance(p, int)]
+        if not pages:
+            problems.append(f"主题「{t.get('title', '')}」没有任何页")
+        for p in pages:
+            if not 1 <= p <= n:
+                problems.append(f"主题「{t.get('title', '')}」里的第 {p} 页不存在（只有 1–{n} 页）")
+            elif p in seen:
+                problems.append(f"第 {p} 页同时出现在「{seen[p]}」和「{t.get('title', '')}」")
+            else:
+                seen[p] = t.get("title", "")
+    missing = [p for p in range(1, n + 1) if p not in seen]
+    if missing:
+        problems.append("这些页没有被分到任何主题：" + "、".join(map(str, missing)))
+    return problems
+
+
+def repair_tree(data: Any, n: int, fallback_title: str = "") -> dict:
+    """Force a tree into shape: every page 1..n in exactly one topic, topics non-empty, pages sorted."""
+    data = data if isinstance(data, dict) else {}
+    seen: set[int] = set()
+    topics = []
+    for t in data.get("children") or []:
+        if not isinstance(t, dict):
+            continue
+        pages = []
+        for p in sorted({p for p in t.get("slides") or [] if isinstance(p, int)}):
+            if 1 <= p <= n and p not in seen:
+                pages.append(p)
+                seen.add(p)
+        if pages:
+            topics.append({"title": str(t.get("title") or "未命名主题").strip(),
+                           "summary": str(t.get("summary") or "").strip(), "slides": pages})
+    if not topics:
+        topics = [{"title": "全部 slides", "summary": "", "slides": []}]
+    for p in range(1, n + 1):
+        if p in seen:
+            continue
+        # Put a missing page with the topic holding the nearest earlier page.
+        before = [t for t in topics if t["slides"] and min(t["slides"]) < p]
+        target = max(before, key=lambda t: max(q for q in t["slides"] if q < p)) if before else topics[0]
+        target["slides"] = sorted(target["slides"] + [p])
+    return {
+        "title": str(data.get("title") or fallback_title).strip(),
+        "subtitle": str(data.get("subtitle") or "").strip(),
+        "children": topics,
+    }
 
 
 def _text(course: Course, page: int) -> str:

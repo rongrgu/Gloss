@@ -62,6 +62,9 @@ elif mode == "tooluse":
     out({"type": "user", "message": {"content": [{"type": "tool_result", "content": "x" * 200_000}]}})
     message("Final ", "answer")
     result("Final answer")
+elif mode == "structured":
+    data = {"echo_schema": json.loads(args[args.index("--json-schema") + 1])}
+    result(json.dumps(data), structured_output=data)
 elif mode == "error":
     result("Invalid API key · Fix external API key", is_error=True, api_error_status=401)
     sys.exit(1)

@@ -22,7 +22,7 @@ export interface Thread {
 
 export interface JobInfo {
   id: string
-  kind: 'explain' | 'answer'
+  kind: 'explain' | 'answer' | 'tree'
   status: 'queued' | 'running' | 'done' | 'error'
   page?: number
   thread_id?: string
@@ -41,12 +41,20 @@ export interface TreeTopic {
   slides: number[]
 }
 
+export interface Tree {
+  title: string
+  subtitle?: string
+  children: TreeTopic[]
+}
+
 export interface Course {
   id: string
   title: string
   path: string
   slide_count: number
-  tree: { title: string; children: TreeTopic[] } | null
+  aspect: number
+  tree: Tree | null
+  tree_job: JobInfo | null
   question_counts: Record<string, number>
   pages_with_notes: number[]
 }
@@ -74,7 +82,7 @@ export type JobEvent =
   | { type: 'start' }
   | { type: 'delta'; text: string }
   | { type: 'reset' }
-  | { type: 'done'; message?: Message; explanation?: Explanation & { page: number } }
+  | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree }
   | { type: 'error'; message: string }
 
 export class ApiError extends Error {
@@ -118,6 +126,8 @@ export const api = {
   },
   open: (path: string) => req<Course>('POST', '/api/courses/open', { path }),
   course: (cid: string) => req<Course>('GET', c(cid)),
+  buildTree: (cid: string, regenerate = false) =>
+    req<{ tree?: Tree; job?: JobInfo }>('POST', `${c(cid)}/tree${regenerate ? '?regenerate=true' : ''}`),
   slide: (cid: string, page: number) => req<SlideData>('GET', `${c(cid)}/slides/${page}`),
   imageUrl: (cid: string, page: number) => `${c(cid)}/slides/${page}/image`,
   cropUrl: (cid: string, tid: string) => `${c(cid)}/threads/${tid}/crop`,
