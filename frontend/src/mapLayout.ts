@@ -43,7 +43,13 @@ export function topicId(i: number) {
   return `topic-${i}`
 }
 
-export function layoutMap(topics: TreeTopic[], collapsed: Set<number>, aspect: number) {
+/**
+ * `topicHeights` are the rendered heights of topic nodes (index → px), measured by React Flow.
+ * A summary can wrap to any number of lines, so rows must be sized from the real node, not TOPIC_H,
+ * or a long summary spills under the next topic. TOPIC_H is only the floor / first-paint guess.
+ */
+export function layoutMap(topics: TreeTopic[], collapsed: Set<number>, aspect: number,
+  topicHeights: ReadonlyMap<number, number> = new Map()) {
   const thumbH = Math.round(THUMB_W / (aspect > 0 ? aspect : 16 / 9))
   const nodes: MapNode[] = []
   const edges: MapEdge[] = []
@@ -54,9 +60,10 @@ export function layoutMap(topics: TreeTopic[], collapsed: Set<number>, aspect: n
   topics.forEach((t, i) => {
     const color = TOPIC_COLORS[i % TOPIC_COLORS.length]
     const isCollapsed = collapsed.has(i)
-    const rowH = Math.max(TOPIC_H, isCollapsed ? MORE_H : thumbH)
+    const topicH = Math.max(TOPIC_H, Math.ceil(topicHeights.get(i) ?? 0))
+    const rowH = Math.max(topicH, isCollapsed ? MORE_H : thumbH)
     const tid = topicId(i)
-    nodes.push({ id: tid, kind: 'topic', x: topicX, y: y + (rowH - TOPIC_H) / 2, w: TOPIC_W, h: TOPIC_H, topic: i, color })
+    nodes.push({ id: tid, kind: 'topic', x: topicX, y: y + (rowH - topicH) / 2, w: TOPIC_W, h: topicH, topic: i, color })
     edges.push({ id: `e-root-${i}`, source: 'root', target: tid, kind: 'curve', color })
     if (isCollapsed) {
       const id = `more-${i}`

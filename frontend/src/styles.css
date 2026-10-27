@@ -82,13 +82,15 @@ button,input,textarea{font:inherit;color:inherit}
 .root p{margin:0;font-size:13px;opacity:.72}
 .sections{display:flex;flex-direction:column;gap:18px}
 .srow{display:flex;align-items:center;gap:46px}
-.snode{position:relative;z-index:1;width:268px;text-align:left;padding:12px 12px 12px 14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;cursor:pointer;display:flex;gap:10px;align-items:flex-start;box-shadow:var(--shadow-1)}
+/* Block layout on purpose: Safari mis-sizes a display:flex <button> whose text wraps, and the
+   mind map lays rows out from the measured node height (mapLayout.ts). */
+.snode{position:relative;z-index:1;display:block;width:268px;text-align:left;padding:12px 40px 13px 32px;background:var(--paper);border:1px solid var(--line);border-radius:12px;cursor:pointer;box-shadow:var(--shadow-1);white-space:normal;overflow-wrap:anywhere}
 .snode:hover{border-color:var(--line-strong)}
-.snode .dot{width:10px;height:10px;border-radius:50%;margin-top:6px;flex:none}
-.snode .txt{flex:1;min-width:0}
+.snode .dot{position:absolute;left:13px;top:18px;width:10px;height:10px;border-radius:50%}
+.snode .txt{display:block}
 .snode .t{font-weight:600;display:block}
-.snode .s{color:var(--muted);font-size:13px;display:block;line-height:1.45;margin-top:2px}
-.snode .chev{margin-top:2px;color:var(--muted);transition:transform .15s}
+.snode .s{color:var(--muted);font-size:13px;display:block;line-height:1.5;margin-top:3px}
+.snode .chev{position:absolute;right:12px;top:13px;color:var(--muted);transition:transform .15s}
 .snode[aria-expanded="false"] .chev{transform:rotate(-90deg)}
 .strip{display:flex;gap:12px;position:relative;z-index:1}
 .thumb{position:relative;width:132px;padding:0;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;box-shadow:var(--shadow-1);transition:transform .12s,box-shadow .12s}
