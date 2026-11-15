@@ -3,6 +3,10 @@
 *.gloss-wal
 *.gloss-shm
 claude_workspace/courses/
+claude_workspace/scopes/
+*.glossq
+*.glossq-wal
+*.glossq-shm
 config.toml
 # lecture material used for local testing
 *.pdf

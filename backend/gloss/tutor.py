@@ -11,7 +11,8 @@ from typing import Any
 import pymupdf
 
 from .jobs import Job, JobManager
-from .providers import Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
+from .providers import (CourseToolSpec, Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef,
+                        TextDelta, ToolUse)
 from .store import Course, Message, Thread
 from . import i18n
 from . import transcript as tr
@@ -404,10 +405,15 @@ class Tutor:
 
     async def _stream(self, job: Job, prompt: str, images: list[Path], session: SessionRef | None,
                       system: str | None, json_schema: dict | None = None, cwd: Path | None = None,
-                      tools: tuple[str, ...] = ("Read",)) -> Done:
+                      tools: tuple[str, ...] = ("Read",), course_tools: CourseToolSpec | None = None,
+                      model: str | None = None) -> Done:
         kw: dict[str, Any] = {"cwd": cwd, "tools": tools}
         if json_schema is not None:
             kw["json_schema"] = json_schema
+        if course_tools is not None:
+            kw["course_tools"] = course_tools
+        if model:
+            kw["model"] = model
         async for ev in self.provider.run(prompt, images=images, session=session, system=system, **kw):
             if isinstance(ev, ToolUse):
                 job.emit({"type": "tool", "name": ev.name, "target": tool_target(ev.name, ev.input)})
@@ -428,6 +434,16 @@ def tool_target(name: str, inp: dict) -> str:
         return f"page:{m.group(1)}" if m else ("course" if base == "course.md" else "file")
     if name == "Grep":
         return f"search:{str(inp.get('pattern', ''))[:60]}"
+    if name.startswith("mcp__gloss__"):  # course tools (§13.4)
+        tool = name.removeprefix("mcp__gloss__")
+        lec = str(inp.get("lecture", ""))
+        if tool == "get_slide":
+            return f"slide:{lec}:{inp.get('page', '')}"
+        if tool == "search_course":
+            return f"search:{str(inp.get('query', ''))[:60]}"
+        if tool in ("get_questions", "get_notes", "get_outline"):
+            return f"{tool.removeprefix('get_')}:{lec}"
+        return tool
     return "files"
 
 

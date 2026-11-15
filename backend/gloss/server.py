@@ -23,9 +23,11 @@ from . import schema
 from .config import Config, app_dir
 from .doctor import auth_status
 from .export import export_markdown
+from .folders import EPSILON, FolderError, Folders, key_between
 from .i18n import LANGUAGE_FOR, Prefs
 from .ingest import IngestError, create_course
 from .jobs import JobManager
+from .quiz import TYPES, QuizMaker, QuizStore
 from .providers import LLMProvider
 from .providers.claude_cli import ClaudeCLIProvider, find_claude
 from .store import Course, Message, Thread
@@ -81,13 +83,39 @@ class Library:
         for cid in list(self._open):
             self.close(cid)
 
-    def new_path(self, stem: str) -> Path:
+    def new_path(self, stem: str, folder: Path | None = None) -> Path:
         stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", stem).strip(" .") or "course"
-        self.dir.mkdir(parents=True, exist_ok=True)
-        p, i = self.dir / f"{stem}.gloss", 2
+        d = folder or self.dir
+        d.mkdir(parents=True, exist_ok=True)
+        p, i = d / f"{stem}.gloss", 2
         while p.exists():
-            p, i = self.dir / f"{stem}-{i}.gloss", i + 1
+            p, i = d / f"{stem}-{i}.gloss", i + 1
         return p
+
+    def open_under(self, path: Path) -> list[Course]:
+        """Open courses whose file is `path` or inside it."""
+        path = path.resolve()
+        return [c for c in list(self._open.values()) if c.path.resolve() == path or c.path.resolve().is_relative_to(path)]
+
+    def is_open(self, path: Path) -> bool:
+        return any(c.path.resolve() == path.resolve() for c in list(self._open.values()))
+
+    def find_open(self, path: Path) -> Course | None:
+        return next((c for c in list(self._open.values()) if c.path.resolve() == path.resolve()), None)
+
+    def moved(self, src: Path, dst: Path) -> None:
+        """Keep the recent list pointing at files after a move or rename."""
+        src, dst = src.resolve(), dst.resolve()
+        items = self.recent()
+        changed = False
+        for it in items:
+            p = Path(it["path"])
+            if p == src or p.is_relative_to(src):
+                it["path"] = str(dst / p.relative_to(src))
+                changed = True
+        if changed:
+            self.recent_file.write_text(json.dumps([{k: it[k] for k in ("path", "title", "opened_at")}
+                                                    for it in items], ensure_ascii=False, indent=1))
 
     def recent(self) -> list[dict[str, Any]]:
         try:
@@ -131,6 +159,40 @@ class NoteBody(BaseModel):
 
 class PrefsBody(BaseModel):
     ui_language: str
+
+
+class MkdirBody(BaseModel):
+    parent: str = ""
+    name: str = Field(min_length=1)
+
+
+class RenameBody(BaseModel):
+    path: str
+    name: str = Field(min_length=1)
+
+
+class MoveBody(BaseModel):
+    path: str
+    to: str
+
+
+class QuizBody(BaseModel):
+    folder: str = ""
+    count: int = 10
+    types: list[str] = Field(default_factory=lambda: list(TYPES))
+    focus: str = "weak"
+    lectures: list[str] | None = None  # library-relative paths (or course ids); None = every lecture under the folder
+
+
+class AttemptBody(BaseModel):
+    question_id: str
+    answer: str = ""
+    correct: bool | None = None  # None: not marked (e.g. revealed without answering)
+
+
+class ReorderBody(BaseModel):
+    path: str  # the lecture being dragged
+    before: str | None = None  # drop it before this lecture; None: at the end
 
 
 # --- serialization ------------------------------------------------------------------
@@ -204,6 +266,8 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     tutor = Tutor(provider, jobs, config.workspace, language=claude_language(), retrieval=config.qa_retrieval,
                   locale=prefs.locale)
     library = Library(config.library, app_dir() / "recent.json")
+    folders = Folders(config.library)
+    quizzes = QuizMaker(tutor, config.library, model=config.quiz_model, verify=config.quiz_verify)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -269,12 +333,141 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     def recent():
         return library.recent()
 
+    # --- library folders (§13.2) ---
+
+    @app.exception_handler(FolderError)
+    async def folder_error(request: Request, e: FolderError):
+        return JSONResponse({"detail": str(e)}, status_code=e.status)
+
+    def summary(c: Course) -> dict[str, Any]:
+        d = course_summary(c, jobs)
+        parent = c.path.resolve().parent
+        d["folder"] = folders.rel(parent) if parent.is_relative_to(folders.root) else None
+        return d
+
+    def close_under(p: Path) -> None:
+        """Close open lectures at or under `p` before moving them; refuse while Claude is working on one."""
+        open_now = library.open_under(p)
+        if any(jobs.active(f"{c.id}:") for c in open_now):
+            raise FolderError("Claude is still working on this lecture; try again when it finishes", 409)
+        for c in open_now:
+            library.close(c.id)
+
+    def write_sort_key(path: Path, key: float) -> None:
+        c = library.find_open(path)
+        if c is not None:
+            c.set_meta("sort_key", repr(key))
+            return
+        with Course.open(path) as c:
+            c.set_meta("sort_key", repr(key))
+
+    @app.get("/api/library")
+    def library_listing(path: str = ""):
+        return folders.listing(path, library.is_open)
+
+    @app.get("/api/library/tree")
+    def library_tree():
+        return folders.tree()
+
+    @app.post("/api/library/folders")
+    def make_folder(body: MkdirBody):
+        return {"path": folders.mkdir(body.parent, body.name)}
+
+    @app.delete("/api/library/folders")
+    def remove_folder(path: str):
+        folders.rmdir(path)
+        return {"ok": True}
+
+    @app.post("/api/library/rename")
+    def rename_entry(body: RenameBody):
+        close_under(folders.resolve(body.path))
+        src, dst = folders.rename(body.path, body.name)
+        library.moved(src, dst)
+        return {"path": folders.rel(dst)}
+
+    @app.post("/api/library/move")
+    def move_entry(body: MoveBody):
+        close_under(folders.resolve(body.path))
+        dst_dir = folders.folder(body.to)
+        last = [info["sort_key"] for _, info in folders.lectures(dst_dir)]
+        src, dst = folders.move(body.path, body.to)
+        library.moved(src, dst)
+        if dst.is_file() and src != dst:  # moved in the app: goes to the end of the target course
+            write_sort_key(dst, (max(last) if last else 0) + 1)
+        return {"path": folders.rel(dst)}
+
+    # --- pre-quiz (§13.5) ---
+
+    @app.post("/api/library/quizzes")
+    async def start_quiz(body: QuizBody):
+        try:
+            job = quizzes.start(body.folder, body.count, tuple(body.types), body.focus, body.lectures)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from e
+        return {"job": job.to_dict()}
+
+    @app.get("/api/library/quizzes")
+    async def list_quizzes(folder: str = ""):
+        job = quizzes.active(folder)
+        return {"quizzes": QuizStore(folders.folder(folder)).list(), "job": job.to_dict() if job else None}
+
+    @app.get("/api/library/quizzes/{qid}")
+    def get_quiz(qid: str, folder: str = ""):
+        d = folders.folder(folder)
+        q = QuizStore(d).get(qid)
+        if q is None:
+            raise HTTPException(404, "no such quiz")
+        files = {info["course_id"]: str(p) for p, info in folders.all_lectures(d) if info["course_id"]}
+        for question in q["questions"]:
+            for src in question["sources"]:
+                src["file"] = files.get(src["lecture"])  # None: the lecture was moved out or deleted
+        return q
+
+    @app.post("/api/library/quizzes/{qid}/attempts")
+    def add_attempt(qid: str, body: AttemptBody, folder: str = ""):
+        store = QuizStore(folders.folder(folder))
+        q = store.get(qid)
+        if q is None or body.question_id not in {x["id"] for x in q["questions"]}:
+            raise HTTPException(404, "no such question")
+        return store.add_attempt(body.question_id, body.answer, body.correct)
+
+    @app.delete("/api/library/quizzes/{qid}")
+    def delete_quiz(qid: str, folder: str = ""):
+        QuizStore(folders.folder(folder)).delete(qid)
+        return {"ok": True}
+
+    @app.post("/api/library/reorder")
+    def reorder(body: ReorderBody):
+        p = folders.resolve(body.path)
+        if not p.is_file():
+            raise FolderError("not a lecture", 404)
+        order = [f for f, _ in folders.lectures(p.parent) if f.resolve() != p.resolve()]
+        keys = {f: info["sort_key"] for f, info in folders.lectures(p.parent)}
+        if body.before is None:
+            i = len(order)
+        else:
+            b = folders.resolve(body.before)
+            i = next((k for k, f in enumerate(order) if f.resolve() == b), None)
+            if i is None:
+                raise FolderError("`before` is not a lecture in the same course")
+        prev = keys[order[i - 1]] if i > 0 else None
+        nxt = keys[order[i]] if i < len(order) else None
+        if prev is not None and nxt is not None and nxt - prev < EPSILON:
+            # precision used up: renumber the whole course 1, 2, 3… in the new order
+            for k, f in enumerate([*order[:i], p, *order[i:]], 1):
+                write_sort_key(f, float(k))
+        else:
+            write_sort_key(p, key_between(prev, nxt))
+        return folders.listing(folders.rel(p.parent), library.is_open)
+
     # --- courses ---
 
     @app.post("/api/courses/import")
-    async def import_pdf(file: UploadFile = File(...), title: str | None = Form(None)):
+    async def import_pdf(file: UploadFile = File(...), title: str | None = Form(None), folder: str = Form("")):
         stem = Path(file.filename or "course.pdf").stem
-        out = library.new_path(stem)
+        out = library.new_path(stem, folders.folder(folder))
         with tempfile.TemporaryDirectory() as tmp:
             pdf = Path(tmp) / f"{stem}.pdf"  # create_course falls back to the file name for the title
             pdf.write_bytes(await file.read())
@@ -282,12 +475,12 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
                 course = create_course(pdf, out, title=title or None)
             except IngestError as e:
                 raise HTTPException(422, str(e)) from e
-        return course_summary(library.add(course), jobs)
+        return summary(library.add(course))
 
     @app.post("/api/courses/open")
     def open_course(body: OpenBody):
         try:
-            return course_summary(library.open(Path(body.path)), jobs)
+            return summary(library.open(Path(body.path)))
         except FileNotFoundError as e:
             raise HTTPException(404, "file not found") from e
         except (schema.NotAGlossFile, schema.FileTooNew) as e:
@@ -295,7 +488,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
 
     @app.get("/api/courses/{cid}")
     async def get_course(cid: str):
-        return course_summary(library.get(cid), jobs)
+        return summary(library.get(cid))
 
     @app.get("/api/courses/{cid}/export.md")
     def export(cid: str):

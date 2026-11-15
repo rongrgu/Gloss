@@ -10,7 +10,7 @@ import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from .base import Done, Event, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
+from .base import CourseToolSpec, Done, Event, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
 
 # Every call: only read-only file tools exist (Read, plus Grep/Glob when asked), they are
 # pre-approved, they cannot leave the working folder (--restricted, verified for all three),
@@ -43,15 +43,22 @@ class ClaudeCLIProvider:
         self.timeout = timeout
 
     def build_args(self, *, session: SessionRef | None, system: str | None,
-                   json_schema: dict | None = None, tools: tuple[str, ...] = ("Read",)) -> list[str]:
+                   json_schema: dict | None = None, tools: tuple[str, ...] = ("Read",),
+                   mcp_config: Path | None = None, model: str | None = None) -> list[str]:
         bin_ = self.claude_bin or find_claude()
         if not bin_:
             raise ProviderError("claude CLI not found on PATH; install Claude Code and log in")
         if not tools or set(tools) - READ_ONLY_TOOLS:
             raise ProviderError(f"only read-only tools are allowed, got {tools}")
-        args = [bin_, *BASE_FLAGS, "--tools", *tools, "--allowedTools", *tools]
-        if self.model:
-            args += ["--model", self.model]
+        allowed = [*tools]
+        if mcp_config is not None:  # course tools (§13.4); MCP tools not listed here are refused, not prompted
+            from ..mcp_server import allowed_tools
+            allowed += allowed_tools()
+        args = [bin_, *BASE_FLAGS, "--tools", *tools, "--allowedTools", *allowed]
+        if mcp_config is not None:
+            args += ["--mcp-config", str(mcp_config), "--strict-mcp-config"]
+        if model or self.model:
+            args += ["--model", model or self.model]
         if session is None:
             args.append("--no-session-persistence")
         elif session.new:
@@ -99,9 +106,18 @@ class ClaudeCLIProvider:
         json_schema: dict | None = None,
         cwd: Path | None = None,
         tools: tuple[str, ...] = ("Read",),
+        course_tools: CourseToolSpec | None = None,
+        model: str | None = None,
     ) -> AsyncIterator[Event]:
-        args = self.build_args(session=session, system=system, json_schema=json_schema, tools=tuple(tools))
         workdir = self.resolve_cwd(cwd)
+        mcp_config = None
+        if course_tools is not None:
+            from ..mcp_server import config
+            mcp_config = workdir / "mcp.json"
+            workdir.mkdir(parents=True, exist_ok=True)
+            mcp_config.write_text(json.dumps(config(course_tools.library, course_tools.folder, list(course_tools.only))))
+        args = self.build_args(session=session, system=system, json_schema=json_schema, tools=tuple(tools),
+                               mcp_config=mcp_config, model=model)
         stdin = self.build_prompt(prompt, list(images), workdir).encode()
         proc = await asyncio.create_subprocess_exec(
             *args, cwd=workdir, env=clean_env(), limit=LINE_LIMIT,
@@ -144,7 +160,8 @@ class ClaudeCLIProvider:
                         yield TextDelta(e["delta"]["text"])
                 elif kind == "assistant" and ev.get("parent_tool_use_id") is None:
                     for block in ev.get("message", {}).get("content", []):
-                        if block.get("type") == "tool_use" and block.get("name") in READ_ONLY_TOOLS:
+                        if block.get("type") == "tool_use" and (block.get("name") in READ_ONLY_TOOLS
+                                                                 or block.get("name", "").startswith("mcp__gloss__")):
                             yield ToolUse(block["name"], block.get("input") or {})
                 elif kind == "result":
                     result = ev

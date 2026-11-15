@@ -24,7 +24,7 @@ export interface Thread {
 
 export interface JobInfo {
   id: string
-  kind: 'explain' | 'answer' | 'tree' | 'align'
+  kind: 'explain' | 'answer' | 'tree' | 'align' | 'quiz'
   status: 'queued' | 'running' | 'done' | 'error'
   page?: number
   thread_id?: string
@@ -68,6 +68,98 @@ export interface Course {
   align_job: JobInfo | null
   question_counts: Record<string, number>
   pages_with_notes: number[]
+  folder: string | null // library-relative folder, null if the file is outside the library
+}
+
+/** Library folder tree (DESIGN.md §13.2). Paths are library-relative with '/' separators. */
+export type FolderKind = 'course' | 'group' | 'empty'
+
+export interface Lecture {
+  path: string
+  file: string // absolute path, for api.open
+  title: string
+  slide_count: number
+  questions: number
+  course_id: string | null
+  sort_key: number
+  open: boolean
+  error: string | null
+}
+
+export interface Listing {
+  path: string
+  name: string
+  root: string
+  crumbs: { name: string; path: string }[]
+  kind: FolderKind
+  mixed: boolean
+  folders: { path: string; name: string; kind: FolderKind; lectures: number; folders: number }[]
+  lectures: Lecture[]
+  has_quizzes: boolean
+}
+
+/** Pre-quiz (DESIGN.md §13.5). */
+export type QuestionType = 'mcq' | 'short' | 'derivation'
+export type QuizFocus = 'weak' | 'balanced' | 'uncovered'
+
+export interface QuizSource {
+  lecture: string | null // course id
+  label: string // L1, L2… at generation time
+  title: string
+  course: string
+  number: number
+  page: number
+  file: string | null // null: the lecture is no longer in this folder
+}
+
+export interface Attempt {
+  answer: string
+  correct: 0 | 1 | null
+  created_at: string
+}
+
+export interface QuizQuestion {
+  id: string
+  n: number
+  type: QuestionType
+  stem: string
+  options: string[]
+  answer: string
+  explanation: string
+  why: string
+  topic: string
+  difficulty: number
+  sources: QuizSource[]
+  review: string | null // the answer check found a problem
+  attempt: Attempt | null
+}
+
+export interface QuizSummary {
+  id: string
+  title: string
+  created_at: string
+  count: number
+  answered: number
+  correct: number
+  options: { count: number; types: QuestionType[]; focus: QuizFocus; requested?: number }
+  model: string | null
+}
+
+export interface Quiz {
+  id: string
+  title: string
+  created_at: string
+  model: string | null
+  options: QuizSummary['options']
+  questions: QuizQuestion[]
+}
+
+export interface QuizRequest {
+  folder: string
+  count: number
+  types: QuestionType[]
+  focus: QuizFocus
+  lectures?: string[] | null
 }
 
 export interface SlideData {
@@ -96,7 +188,8 @@ export type JobEvent =
   | { type: 'reset' }
   | { type: 'tool'; name: string; target: string } // 'page:7' | 'course' | 'search:<pattern>' | 'file' | 'files'
   | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree;
-      aligned_pages?: number[] }
+      aligned_pages?: number[]; quiz_id?: string; count?: number; requested?: number }
+  | { type: 'phase'; phase: 'generate' | 'verify' | 'verify_failed'; attempt?: number; message?: string }
   | { type: 'error'; message: string }
 
 export class ApiError extends Error {
@@ -135,11 +228,29 @@ export const api = {
   recent: () => req<RecentItem[]>('GET', '/api/recent'),
   prefs: () => req<Prefs>('GET', '/api/prefs'),
   setPrefs: (ui_language: 'zh' | 'en') => req<Prefs>('PUT', '/api/prefs', { ui_language }),
-  importPdf: (file: File) => {
+  importPdf: (file: File, folder = '') => {
     const fd = new FormData()
     fd.append('file', file)
+    fd.append('folder', folder)
     return req<Course>('POST', '/api/courses/import', fd)
   },
+  library: (path: string) => req<Listing>('GET', `/api/library?path=${encodeURIComponent(path)}`),
+  libraryTree: () => req<{ path: string; depth: number; kind: FolderKind }[]>('GET', '/api/library/tree'),
+  mkdir: (parent: string, name: string) => req<{ path: string }>('POST', '/api/library/folders', { parent, name }),
+  rmdir: (path: string) => req<{ ok: true }>('DELETE', `/api/library/folders?path=${encodeURIComponent(path)}`),
+  rename: (path: string, name: string) => req<{ path: string }>('POST', '/api/library/rename', { path, name }),
+  move: (path: string, to: string) => req<{ path: string }>('POST', '/api/library/move', { path, to }),
+  reorder: (path: string, before: string | null) => req<Listing>('POST', '/api/library/reorder', { path, before }),
+  quizzes: (folder: string) =>
+    req<{ quizzes: QuizSummary[]; job: JobInfo | null }>('GET', `/api/library/quizzes?folder=${encodeURIComponent(folder)}`),
+  startQuiz: (r: QuizRequest) => req<{ job: JobInfo }>('POST', '/api/library/quizzes', r),
+  quiz: (folder: string, qid: string) =>
+    req<Quiz>('GET', `/api/library/quizzes/${qid}?folder=${encodeURIComponent(folder)}`),
+  attempt: (folder: string, qid: string, question_id: string, answer: string, correct: boolean | null) =>
+    req<Attempt>('POST', `/api/library/quizzes/${qid}/attempts?folder=${encodeURIComponent(folder)}`,
+      { question_id, answer, correct }),
+  deleteQuiz: (folder: string, qid: string) =>
+    req<{ ok: true }>('DELETE', `/api/library/quizzes/${qid}?folder=${encodeURIComponent(folder)}`),
   open: (path: string) => req<Course>('POST', '/api/courses/open', { path }),
   course: (cid: string) => req<Course>('GET', c(cid)),
   buildTree: (cid: string, regenerate = false) =>

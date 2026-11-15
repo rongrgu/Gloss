@@ -52,6 +52,8 @@ uv run gloss export course.gloss    # writes course.md
 - **Transcript** — on the course page, "Upload transcript". Claude aligns it to the slides (one call, usually under 20 seconds). Each slide's explanation panel can show its excerpt ("Transcript passage"). Explanations generated before the upload aren't redone automatically — use "Regenerate" on the slides you care about.
 - **Notes** — plain text per slide, saved automatically. "Clip to notes" under an answer copies the question and the answer's first paragraph into the page's notes.
 - **Session log** — shows exactly what was sent to Claude for this slide (for the curious).
+- **Library** — the home page is your library folder (`~/Gloss` by default). Organize it however you like: folders for school, year, term, course… A folder that holds lectures is a course. Lectures are listed in the order you imported them; drag to reorder, or drag onto a folder (or a breadcrumb) to move. "Import PDF" puts the new lecture in the folder you are looking at. Folders on disk are the source of truth, so organizing in Finder works too.
+- **Pre-quiz** — on any course (or any folder above it), "New pre-quiz" has Claude write practice questions for exam prep. It reads the slides and, above all, what you asked and noted while studying, so it targets where you got stuck, and it covers topics you never asked about too. Each question cites the slide it comes from, says why it was chosen, and has an answer and explanation; a second pass checks every answer key against the slides. Multiple choice is marked automatically; for written answers you compare with the reference answer and mark yourself. Generation takes about a minute and uses noticeably more quota than a question.
 - **Export** — "Export Markdown" on the course page (or `gloss export`) writes the map, explanations, questions and answers, and notes as one Markdown file.
 
 A `.gloss` file is self-contained: send it to a classmate and they can read everything in Gloss, even without Claude installed (they just can't ask new questions).
@@ -79,13 +81,15 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 | `language` | (unset) | language for explanations, answers and the mind map. Unset, it follows the interface language (English by default; switch with the 中文 / EN button in the top bar). Set it to pin one, e.g. `"中文"` |
 | `concurrency` | `2` | how many Claude calls may run at once (different slides) |
 | `qa_retrieval` | `true` | let answers search the rest of the course when a question needs it |
+| `quiz_model` | (unset) | model for pre-quiz generation; unset uses `model` |
+| `quiz_verify` | `true` | check every pre-quiz answer key against the slides with a second call |
 | `provider` | `"claude_cli"` | `"claude_cli"` (your Claude Code login) or `"anthropic_api"` (see below) |
 | `library` | `~/Gloss` | where imported courses are saved |
 | `claude_bin` | found on `PATH` | path to the `claude` executable |
 
 ### Using an API key instead
 
-Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv sync --extra api`, or `pip install 'gloss[api]'`), and export `ANTHROPIC_API_KEY`. Calls are then billed to that key at API rates instead of counting toward your Claude plan; `gloss doctor` checks the setup. Differences: answers can't search the rest of the course (no file tools over the API), and every follow-up resends the slide's earlier questions and answers (prompt caching keeps the repeated part cheap). On models that support it, Gloss turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another automatically.
+Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv sync --extra api`, or `pip install 'gloss[api]'`), and export `ANTHROPIC_API_KEY`. Calls are then billed to that key at API rates instead of counting toward your Claude plan; `gloss doctor` checks the setup. Differences: answers can't search the rest of the course and pre-quizzes aren't available (both need tools, which this route doesn't have), and every follow-up resends the slide's earlier questions and answers (prompt caching keeps the repeated part cheap). On models that support it, Gloss turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another automatically.
 
 **Changing how Claude explains things:** the prompts are plain Markdown in `claude_workspace/` (`CLAUDE.md` for the tutor's role, `prompts/*.md` for each task). Edit them to change the style, for example exam-focused or more concise. Changes apply to new explanations and to new question sessions.
 

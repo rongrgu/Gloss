@@ -28,11 +28,11 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: log.append(f"pageerror: {e}"))
 
     # English by default (fresh GLOSS_HOME); the main flow below runs in Chinese, then switches back (§9.3)
-    pg.goto(URL); pg.wait_for_selector("text=Import slides")
+    pg.goto(URL); pg.wait_for_selector("text=Import PDF")
     assert pg.evaluate("document.documentElement.lang") == "en"
     pg.screenshot(path=shots / "00-home-en.png")
-    pg.click("button.lang"); pg.wait_for_selector("text=导入课件")
-    pg.reload(); pg.wait_for_selector("text=导入课件")  # the choice is remembered by the backend
+    pg.click("button.lang"); pg.wait_for_selector("text=导入 PDF")
+    pg.reload(); pg.wait_for_selector("text=导入 PDF")  # the choice is remembered by the backend
     step("default English, switched to 中文")
     pg.screenshot(path=shots / "01-home.png")
     step("home ok; importing")

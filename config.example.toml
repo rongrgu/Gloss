@@ -22,6 +22,13 @@ concurrency = 2
 # current slide only.
 qa_retrieval = true
 
+# Pre-quiz (exam practice from a course folder): reads many slides, so it uses more quota than
+# a question. Pick a different model for it if you like, e.g. a stronger one than for Q&A.
+# quiz_model = "sonnet"
+# After generating, check every answer key against the slides with a second call; questions
+# that fail are marked "needs review". Set to false to skip the check and save quota.
+quiz_verify = true
+
 # Where newly imported courses (.gloss files) are saved.
 # library = "~/Gloss"
 

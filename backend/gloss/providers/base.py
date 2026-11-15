@@ -43,6 +43,14 @@ class Done:
 Event = TextDelta | Reset | ToolUse | Done
 
 
+@dataclass(frozen=True)
+class CourseToolSpec:
+    """Read-only course tools over one library folder (DESIGN.md §13.4)."""
+    library: Path
+    folder: str = ""
+    only: tuple[str, ...] = ()  # lecture labels or course ids; empty = all
+
+
 class ProviderError(Exception):
     pass
 
@@ -62,11 +70,15 @@ class LLMProvider(Protocol):
         json_schema: dict | None = None,
         cwd: Path | None = None,
         tools: tuple[str, ...] = ("Read",),
+        course_tools: CourseToolSpec | None = None,
+        model: str | None = None,
     ) -> AsyncIterator[Event]:
         """Stream one turn. `system` only takes effect when the session is new (or session is None).
         With `json_schema`, the reply is validated against it and returned parsed in `Done.data`.
         `cwd` is the folder the model may read (and search, with Grep/Glob in `tools`); it must be
         inside the provider's workspace. Images must be inside it. Providers without tools ignore both.
+        `course_tools` adds the read-only course tools (§13.4); providers without tools ignore it.
+        `model` overrides the provider's model for this call (e.g. config `quiz_model`).
 
         The last event is always `Done`; failures raise `ProviderError`.
         """

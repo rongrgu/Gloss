@@ -19,6 +19,8 @@ class Call:
     json_schema: dict | None = None
     cwd: Path | None = None
     tools: tuple = ("Read",)
+    course_tools: object = None
+    model: str | None = None
 
 
 @dataclass
@@ -33,8 +35,9 @@ class FakeProvider:
 
     tool_calls: list = field(default_factory=list)  # ToolUse events to emit before answering
 
-    async def run(self, prompt, *, images=(), session=None, system=None, json_schema=None, cwd=None, tools=("Read",)):
-        self.calls.append(Call(prompt, list(images), session, system, json_schema, cwd, tuple(tools)))
+    async def run(self, prompt, *, images=(), session=None, system=None, json_schema=None, cwd=None, tools=("Read",),
+                  course_tools=None, model=None):
+        self.calls.append(Call(prompt, list(images), session, system, json_schema, cwd, tuple(tools), course_tools, model))
         for t in self.tool_calls:
             yield t
         for p in images:

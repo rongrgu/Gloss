@@ -3,6 +3,7 @@
     gloss                 start the app and open it in the browser
     gloss doctor [--live] check that Gloss can run here
     gloss export FILE     write a course as Markdown
+    gloss mcp-serve       (internal) course tools for claude, over stdio (DESIGN.md §13.4)
 """
 
 from __future__ import annotations
@@ -88,8 +89,16 @@ def main(argv: list[str] | None = None) -> None:
     e = sub.add_parser("export", help="export a .gloss course as Markdown")
     e.add_argument("file")
     e.add_argument("-o", "--output", help="output path (default: next to the file, .md)")
+    m = sub.add_parser("mcp-serve", help="(internal) serve the course tools to claude over stdio")
+    m.add_argument("--library", required=True)
+    m.add_argument("--folder", default="")
+    m.add_argument("--only", help="comma-separated lecture labels or course ids")
     args = ap.parse_args(argv)
 
+    if args.cmd == "mcp-serve":
+        from .mcp_server import serve as mcp_serve
+        mcp_serve(Path(args.library), args.folder, args.only.split(",") if args.only else None)
+        sys.exit(0)
     if args.cmd == "doctor":
         from .doctor import main as doctor_main
         sys.exit(doctor_main(["--live"] if args.live else []))

@@ -114,6 +114,8 @@ class AnthropicAPIProvider:
         json_schema: dict | None = None,
         cwd: Path | None = None,  # noqa: ARG002 — no tools
         tools: tuple[str, ...] = ("Read",),  # noqa: ARG002
+        course_tools: Any = None,  # noqa: ARG002 — no tools
+        model: str | None = None,  # noqa: ARG002 — only used by pre-quiz, which needs tools
     ) -> AsyncIterator[Event]:
         if session is not None and not session.new:
             raise SessionNotFound(session.id)  # the caller rebuilds from stored history

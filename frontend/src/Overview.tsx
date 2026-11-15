@@ -52,7 +52,7 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
   return (
     <div id="app" className="full">
       <header className="bar">
-        <a className="btn ghost" href={href({ name: 'home' })} style={{ textDecoration: 'none' }}><Brand /></a>
+        <a className="btn ghost" href={href({ name: 'home', folder: course.folder ?? '' })} style={{ textDecoration: 'none' }}><Brand /></a>
         <span className="file" title={course.path}>{course.title}</span>
         <span className="spacer" />
         <span className="saved wide-only">{t.autosaved}</span>

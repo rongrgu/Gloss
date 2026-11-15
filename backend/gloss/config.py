@@ -68,6 +68,8 @@ class Config:
     claude_bin: str | None = None  # default: found on PATH
     timeout: float = 600  # seconds per call
     qa_retrieval: bool = True  # answers may search the whole course (Grep/Read in the course folder)
+    quiz_model: str | None = None  # model for pre-quiz generation (§13.5); None = `model`
+    quiz_verify: bool = True  # a second call checks every answer key against the slides
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

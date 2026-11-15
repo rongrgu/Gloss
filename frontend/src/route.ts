@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react'
 
 export type Route =
-  | { name: 'home' }
+  | { name: 'home'; folder: string } // folder: library-relative path, '' = the library root (§13.2)
+  | { name: 'quiz'; folder: string; qid: string } // a pre-quiz stored in that folder (§13.6)
   | { name: 'overview'; cid: string }
   | { name: 'slide'; cid: string; page: number }
 
+const decodePath = (p: string) => p.split('/').map(decodeURIComponent).join('/')
+const encodePath = (p: string) => p.split('/').map(encodeURIComponent).join('/')
+
 export function parseHash(hash: string): Route {
+  const q = hash.match(/^#\/q\/([0-9a-f]+)(?:\/(.+))?$/)
+  if (q) return { name: 'quiz', qid: q[1], folder: q[2] ? decodePath(q[2]) : '' }
+  const f = hash.match(/^#\/f\/(.+)$/)
+  if (f) return { name: 'home', folder: decodePath(f[1]) }
   const m = hash.match(/^#\/c\/([^/]+)(?:\/p\/(\d+))?$/)
-  if (!m) return { name: 'home' }
+  if (!m) return { name: 'home', folder: '' }
   const cid = decodeURIComponent(m[1])
   return m[2] ? { name: 'slide', cid, page: Number(m[2]) } : { name: 'overview', cid }
 }
 
 export function href(r: Route): string {
-  if (r.name === 'home') return '#/'
+  if (r.name === 'home') return r.folder ? `#/f/${encodePath(r.folder)}` : '#/'
+  if (r.name === 'quiz') return `#/q/${r.qid}${r.folder ? '/' + encodePath(r.folder) : ''}`
   const base = `#/c/${encodeURIComponent(r.cid)}`
   return r.name === 'slide' ? `${base}/p/${r.page}` : base
 }
