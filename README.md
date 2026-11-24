@@ -130,6 +130,29 @@ npm run dev                                 # dev server, proxies /api to `uv ru
 npm run build                               # rebuilds backend/gloss/static (committed; a test checks it's current)
 ```
 
+### Publishing to PyPI
+
+The tag-triggered `.github/workflows/publish.yml` uses PyPI Trusted Publishing.
+Before publishing, configure a GitHub Actions trusted publisher for `glossr`
+on PyPI (or a [pending publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+if the project has not yet been created):
+
+| PyPI field | Value |
+|---|---|
+| Project name (pending publisher) | `glossr` |
+| Owner | `rongrgu` |
+| Repository name | `Gloss` |
+| Workflow name | `publish.yml` |
+| Environment name | `pypi` |
+
+For an existing project, add or correct the publisher under the project's
+**Publishing** settings on PyPI. An `invalid-publisher` error means the OIDC
+identity did not match a trusted publisher; check these fields against the
+workflow and the [PyPI troubleshooting guide](https://docs.pypi.org/trusted-publishers/troubleshooting/).
+After correcting the registration, rerun the failed publish job in GitHub
+Actions. For new releases, bump the version in `pyproject.toml` and push the
+matching `v`-prefixed tag.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
