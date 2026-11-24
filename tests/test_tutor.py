@@ -45,8 +45,13 @@ def test_prompts_render_and_strip_comment(setup):
     _, ws = setup
     p = Prompts(ws)
     assert not p.role().startswith("<!--")
-    out = p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript=None, explanation="E")
+    out = p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript=None, explanation="E",
+                   weak_points="")
     assert "第 2 / 3 页" in out and "（无）" in out and "{{" not in out
+    assert out.rstrip().endswith("E")  # an empty optional section leaves nothing behind (§15.5)
+    out = p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript=None, explanation="E",
+                   weak_points="## 学生之前卡住过的地方\n- x")
+    assert out.rstrip().endswith("E\n\n## 学生之前卡住过的地方\n- x")
     with pytest.raises(KeyError, match="explanation"):
         p.render("qa-opening", course_title="T", page=2, page_count=3, text="", transcript="")
 

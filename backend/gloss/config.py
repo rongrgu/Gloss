@@ -70,6 +70,8 @@ class Config:
     qa_retrieval: bool = True  # answers may search the whole course (Grep/Read in the course folder)
     quiz_model: str | None = None  # model for pre-quiz generation (§13.5); None = `model`
     quiz_verify: bool = True  # a second call checks every answer key against the slides
+    digest_model: str | None = None  # model for lecture summaries (§15.3); None = `model`
+    use_profile: bool = True  # mention relevant study-profile weak points in explanations and Q&A (§15.5)
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

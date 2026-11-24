@@ -53,6 +53,9 @@ uv run gloss export course.gloss    # writes course.md
 - **Notes** — plain text per slide, saved automatically. "Clip to notes" under an answer copies the question and the answer's first paragraph into the page's notes.
 - **Session log** — shows exactly what was sent to Claude for this slide (for the curious).
 - **Library** — the home page is your library folder (`~/Gloss` by default). Organize it however you like: folders for school, year, term, course… A folder that holds lectures is a course. Lectures are listed in the order you imported them; drag to reorder, or drag onto a folder (or a breadcrumb) to move. "Import PDF" puts the new lecture in the folder you are looking at. Folders on disk are the source of truth, so organizing in Finder works too.
+- **Got it / still confused** — under each answer, mark whether you understand now. Unresolved questions turn orange on the slide and on the mind map, and pre-quizzes and summaries take your marks into account.
+- **Finish lecture** — on the mind map, "Finish lecture" has Claude write a study summary from your questions, notes and quiz answers: what the lecture covered, what you asked (grouped by concept), what is still unclear, what you now understand, open questions, and slides worth reviewing. Every point links back to the question it came from. When you ask more later, "Update summary" refreshes it.
+- **Study profile** — each course keeps a list of what you still find unclear, by concept and with evidence (your questions, marks and quiz answers). Finishing a lecture updates it; quiz answers and marks move items between "still unclear", "improving" and "resolved" on their own. You can resolve, reopen, rename, merge or delete items, and undo the last automatic change. New explanations and question sessions mention a weak point when, and only when, the slide is related to it (turn this off with `use_profile = false`).
 - **Pre-quiz** — on any course (or any folder above it), "New pre-quiz" has Claude write practice questions for exam prep. It reads the slides and, above all, what you asked and noted while studying, so it targets where you got stuck, and it covers topics you never asked about too. Each question cites the slide it comes from, says why it was chosen, and has an answer and explanation; a second pass checks every answer key against the slides. Multiple choice is marked automatically; for written answers you compare with the reference answer and mark yourself. Generation takes about a minute and uses noticeably more quota than a question.
 - **Export** — "Export Markdown" on the course page (or `gloss export`) writes the map, explanations, questions and answers, and notes as one Markdown file.
 
@@ -83,6 +86,8 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 | `qa_retrieval` | `true` | let answers search the rest of the course when a question needs it |
 | `quiz_model` | (unset) | model for pre-quiz generation; unset uses `model` |
 | `quiz_verify` | `true` | check every pre-quiz answer key against the slides with a second call |
+| `digest_model` | (unset) | model for lecture summaries and study-profile updates; unset uses `model` |
+| `use_profile` | `true` | mention relevant weak points from the study profile in new explanations and question sessions |
 | `provider` | `"claude_cli"` | `"claude_cli"` (your Claude Code login) or `"anthropic_api"` (see below) |
 | `library` | `~/Gloss` | where imported courses are saved |
 | `claude_bin` | found on `PATH` | path to the `claude` executable |

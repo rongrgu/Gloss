@@ -115,6 +115,16 @@ def test_ask_follow_up_and_state(env):
 
     assert client.patch(f"/api/courses/{cid}/threads/{tid}", json={"minimized": True}).status_code == 200
     assert client.get(f"/api/courses/{cid}/slides/2").json()["threads"][0]["minimized"] is True
+    # M8: understood is patched on its own, and null clears it (§15.2)
+    th = lambda: client.get(f"/api/courses/{cid}/slides/2").json()["threads"][0]  # noqa: E731
+    assert th()["understood"] is None
+    client.patch(f"/api/courses/{cid}/threads/{tid}", json={"understood": False})
+    assert th()["understood"] is False and th()["minimized"] is True
+    assert client.get(f"/api/courses/{cid}").json()["confused_counts"] == {"2": 1}
+    client.patch(f"/api/courses/{cid}/threads/{tid}", json={"minimized": False})
+    assert th()["understood"] is False and th()["minimized"] is False
+    client.patch(f"/api/courses/{cid}/threads/{tid}", json={"understood": None})
+    assert th()["understood"] is None and client.get(f"/api/courses/{cid}").json()["confused_counts"] == {}
 
     log = client.get(f"/api/courses/{cid}/slides/2/session").json()
     assert len(log["messages"]) == 4 and log["messages"][2]["content"] == "[Thread #1 · 追问]\n再讲讲"

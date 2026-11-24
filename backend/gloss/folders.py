@@ -46,7 +46,7 @@ def clean_name(name: str) -> str:
 def peek(path: Path) -> dict[str, Any]:
     """Lecture info for listings, read-only (no migrate, no writes; safe while the app has it open)."""
     info: dict[str, Any] = {"title": path.stem, "slide_count": 0, "questions": 0, "course_id": None,
-                            "sort_key": None, "error": None}
+                            "sort_key": None, "error": None, "status": "new", "new_since_digest": None}
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error as e:
@@ -60,6 +60,14 @@ def peek(path: Path) -> dict[str, Any]:
         info["slide_count"] = conn.execute("SELECT COUNT(*) FROM slides").fetchone()[0]
         info["questions"] = conn.execute("SELECT COUNT(*) FROM threads").fetchone()[0]
         info["sort_key"] = sort_key(meta, path)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        studied = info["questions"] or conn.execute("SELECT COUNT(*) FROM explanations").fetchone()[0]
+        info["status"] = meta.get("lecture_status") or ("studying" if studied else "new")
+        if "digests" in tables:  # schema v4 (§15.3)
+            row = conn.execute("SELECT up_to_message_id FROM digests ORDER BY id DESC LIMIT 1").fetchone()
+            if row:
+                info["new_since_digest"] = conn.execute("SELECT COUNT(*) FROM messages WHERE id > ?",
+                                                        (row[0],)).fetchone()[0]
     except (sqlite3.Error, ValueError) as e:
         info["error"] = "not a Gloss file" if isinstance(e, sqlite3.DatabaseError) else str(e)
         info["sort_key"] = path.stat().st_mtime
@@ -153,6 +161,7 @@ class Folders:
             "folders": sub,
             "lectures": [{"path": self.rel(f), "file": str(f), "open": is_open(f), **info} for f, info in lectures],
             "has_quizzes": (d / QUIZ_FILE).exists(),
+            "has_study": (d / "study.glossp").exists(),
         }
 
     def tree(self) -> list[dict[str, Any]]:

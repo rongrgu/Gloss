@@ -19,12 +19,13 @@ export interface Thread {
   quote: string | null // explanation_text
   minimized: boolean
   created_at: string
+  understood: boolean | null // the student's own mark (§15.2): got it / still confused / not marked
   messages: Message[]
 }
 
 export interface JobInfo {
   id: string
-  kind: 'explain' | 'answer' | 'tree' | 'align' | 'quiz'
+  kind: 'explain' | 'answer' | 'tree' | 'align' | 'quiz' | 'digest' | 'profile'
   status: 'queued' | 'running' | 'done' | 'error'
   page?: number
   thread_id?: string
@@ -68,7 +69,23 @@ export interface Course {
   align_job: JobInfo | null
   question_counts: Record<string, number>
   pages_with_notes: number[]
-  folder: string | null // library-relative folder, null if the file is outside the library
+  confused_counts: Record<string, number> // page -> questions marked "still confused"
+  folder: string | null
+  lecture: {
+    status: 'new' | 'studying' | 'done'
+    digest_at: string | null
+    new_since_digest: number | null // messages since the latest summary
+    digest_job: JobInfo | null
+  }
+}
+
+/** A lecture's study summary (DESIGN.md §15.3). */
+export interface Digest {
+  content: string // Markdown with gloss: links
+  up_to_message_id: number
+  model: string | null
+  created_at: string
+  new_messages: number // library-relative folder, null if the file is outside the library
 }
 
 /** Library folder tree (DESIGN.md §13.2). Paths are library-relative with '/' separators. */
@@ -84,6 +101,8 @@ export interface Lecture {
   sort_key: number
   open: boolean
   error: string | null
+  status: 'new' | 'studying' | 'done'
+  new_since_digest: number | null
 }
 
 export interface Listing {
@@ -96,6 +115,40 @@ export interface Listing {
   folders: { path: string; name: string; kind: FolderKind; lectures: number; folders: number }[]
   lectures: Lecture[]
   has_quizzes: boolean
+  has_study: boolean
+}
+
+/** The course's study profile: weak points by concept, with evidence (DESIGN.md §15.4). */
+export type WeakStatus = 'open' | 'improving' | 'resolved'
+
+export interface Evidence {
+  id: number
+  kind: 'thread' | 'quiz'
+  lecture: string // course id of the .gloss
+  page: number | null
+  ref: string // thread id or quiz question id
+  polarity: 1 | -1 // +1 not understood, -1 understood
+  note: string
+  created_at: string
+}
+
+export interface WeakPoint {
+  id: string // W1, W2… never reused
+  concept: string
+  summary: string
+  status: WeakStatus
+  pinned: boolean // the student set the status; automatic updates leave it
+  extra_evidence: number
+  updated_at: string
+  evidence: Evidence[]
+}
+
+export interface Profile {
+  weak_points: WeakPoint[]
+  pending: (Omit<Evidence, 'id'> & { id: number })[]
+  revisions: { id: number; trigger: string; changes: Record<string, unknown>[]; undone: boolean; created_at: string }[]
+  lectures: Record<string, { file: string; title: string; number: number }>
+  job: JobInfo | null
 }
 
 /** Pre-quiz (DESIGN.md §13.5). */
@@ -188,8 +241,8 @@ export type JobEvent =
   | { type: 'reset' }
   | { type: 'tool'; name: string; target: string } // 'page:7' | 'course' | 'search:<pattern>' | 'file' | 'files'
   | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree;
-      aligned_pages?: number[]; quiz_id?: string; count?: number; requested?: number }
-  | { type: 'phase'; phase: 'generate' | 'verify' | 'verify_failed'; attempt?: number; message?: string }
+      aligned_pages?: number[]; quiz_id?: string; count?: number; requested?: number; digest?: Digest }
+  | { type: 'phase'; phase: 'generate' | 'verify' | 'verify_failed' | 'profile' | 'profile_failed'; attempt?: number; message?: string }
   | { type: 'error'; message: string }
 
 export class ApiError extends Error {
@@ -276,6 +329,20 @@ export const api = {
   retry: (cid: string, tid: string) => req<{ job: JobInfo }>('POST', `${c(cid)}/threads/${tid}/retry`),
   setMinimized: (cid: string, tid: string, minimized: boolean) =>
     req<{ ok: true }>('PATCH', `${c(cid)}/threads/${tid}`, { minimized }),
+  profile: (folder: string) => req<Profile>('GET', `/api/library/profile?folder=${encodeURIComponent(folder)}`),
+  organizeProfile: (folder: string) =>
+    req<{ job: JobInfo }>('POST', `/api/library/profile/organize?folder=${encodeURIComponent(folder)}`),
+  patchWeakPoint: (folder: string, wid: string, body: { status?: WeakStatus; concept?: string; summary?: string }) =>
+    req<Profile>('PATCH', `/api/library/profile/${wid}?folder=${encodeURIComponent(folder)}`, body),
+  mergeWeakPoint: (folder: string, wid: string, into: string) =>
+    req<Profile>('POST', `/api/library/profile/${wid}/merge?folder=${encodeURIComponent(folder)}`, { into }),
+  deleteWeakPoint: (folder: string, wid: string) =>
+    req<Profile>('DELETE', `/api/library/profile/${wid}?folder=${encodeURIComponent(folder)}`),
+  undoProfile: (folder: string) => req<Profile>('POST', `/api/library/profile/undo?folder=${encodeURIComponent(folder)}`),
+  digest: (cid: string) => req<Digest>('GET', `${c(cid)}/digest`),
+  makeDigest: (cid: string) => req<{ job: JobInfo }>('POST', `${c(cid)}/digest`),
+  setUnderstood: (cid: string, tid: string, understood: boolean | null) =>
+    req<{ ok: true }>('PATCH', `${c(cid)}/threads/${tid}`, { understood }),
   deleteThread: (cid: string, tid: string) => req<{ ok: true }>('DELETE', `${c(cid)}/threads/${tid}`),
   putNote: (cid: string, page: number, content: string) =>
     req<{ ok: true }>('PUT', `${c(cid)}/slides/${page}/note`, { content }),

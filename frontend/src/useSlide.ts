@@ -161,5 +161,10 @@ export function useSlide(cid: string, page: number, onCourseChanged: () => void)
     changed.current()
   }, [cid])
 
-  return { slide, threads, streams, explain, loadError, generate, ask, followUp, retry, setMinimized, remove }
+  const setUnderstood = useCallback((tid: string, understood: boolean | null) => {
+    setThreads((ts) => ts.map((t) => (t.id === tid ? { ...t, understood } : t)))
+    api.setUnderstood(cid, tid, understood).catch(() => {})
+  }, [cid])
+
+  return { slide, threads, streams, explain, loadError, generate, ask, followUp, retry, setMinimized, setUnderstood, remove }
 }

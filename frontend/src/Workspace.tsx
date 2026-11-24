@@ -17,9 +17,10 @@ import { useSlide, type ExplainState } from './useSlide'
 
 const isNarrow = () => window.matchMedia('(max-width:760px)').matches
 
-export default function Workspace({ course, page, onCourseChanged }: {
+export default function Workspace({ course, page, thread, onCourseChanged }: {
   course: Course
   page: number
+  thread?: string // open this question's dialog (a link from the study summary, §15.3)
   onCourseChanged: () => void
 }) {
   const cid = course.id
@@ -110,6 +111,17 @@ export default function Workspace({ course, page, onCourseChanged }: {
   }, [cid, pageCount])
 
   const front = (tid: string) => setZ((cur) => ({ top: cur.top + 1, of: { ...cur.of, [tid]: cur.top + 1 } }))
+
+  // A summary link names a question: once this page's questions are loaded, open it on top, once.
+  const opened = useRef<string | null>(null)
+  useEffect(() => {
+    if (!thread || opened.current === thread || !s.threads.some((x) => x.id === thread)) return
+    opened.current = thread
+    if (s.threads.find((x) => x.id === thread)?.minimized) s.setMinimized(thread, false)
+    front(thread)
+    go({ name: 'slide', cid, page }, true) // drop the thread from the URL so reloads don't reopen it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread, s.threads])
 
   // --- keyboard (mockup: ← → page, Esc cancels selection / closes drawer) ---
   useEffect(() => {
@@ -234,6 +246,7 @@ export default function Workspace({ course, page, onCourseChanged }: {
             anchor={t.rect ? stageAnchor(stageRef, asSel(t)) : elementAnchor(explainPane)}
             tick={tick} z={z.of[t.id] ?? 11} onFront={() => front(t.id)}
             onMinimize={() => s.setMinimized(t.id, true)}
+            onUnderstood={(v) => s.setUnderstood(t.id, v)}
             onDelete={() => s.remove(t.id).catch((e) => showToast(String(e.message ?? e)))}
             onFollowUp={(text) => s.followUp(t.id, text)} onRetry={() => s.retry(t.id)} onClip={(msg) => clip(t.id, msg)} />
         ))}

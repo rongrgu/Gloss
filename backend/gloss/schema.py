@@ -54,7 +54,20 @@ def _v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE threads ADD COLUMN quote TEXT")
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1, _v1_to_v2]
+def _v2_to_v3(conn: sqlite3.Connection) -> None:
+    # M8: the student marks a question "understood" (1) / "still confused" (0); NULL = not marked.
+    conn.execute("ALTER TABLE threads ADD COLUMN understood INTEGER")
+    conn.execute("ALTER TABLE threads ADD COLUMN understood_at TEXT")
+
+
+def _v3_to_v4(conn: sqlite3.Connection) -> None:
+    # M9: per-lecture summaries. Every version is kept; the latest is shown. `up_to_message_id` is the
+    # watermark: messages after it are "new since the summary". meta.lecture_status: new | studying | done.
+    conn.execute("CREATE TABLE digests (id INTEGER PRIMARY KEY, data TEXT, content TEXT, "
+                 "up_to_message_id INTEGER, model TEXT, created_at TEXT)")
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1, _v1_to_v2, _v2_to_v3, _v3_to_v4]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

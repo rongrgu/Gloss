@@ -168,6 +168,29 @@ class QuizStore:
                       (question_id, answer, None if correct is None else int(correct), at))
         return {"answer": answer, "correct": None if correct is None else int(correct), "created_at": at}
 
+    def latest_attempts(self) -> list[dict[str, Any]]:
+        """Every question's latest attempt, read-only (no migrate; safe from the MCP server). For §15.2."""
+        if not self.path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT q.id, q.quiz_id, q.data, a.correct, a.created_at FROM attempts a "
+                "JOIN quiz_questions q ON q.id = a.question_id ORDER BY a.id").fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+        latest: dict[str, dict[str, Any]] = {}
+        for qid, quiz_id, data, correct, at in rows:
+            d = json.loads(data)
+            latest[qid] = {"question_id": qid, "quiz_id": quiz_id, "correct": correct, "created_at": at,
+                           "topic": d.get("topic", ""), "stem": d.get("stem", ""), "sources": d.get("sources") or []}
+        return list(latest.values())
+
     def delete(self, qid: str) -> None:
         with self._lock, self._conn(write=True) as c:
             c.execute("BEGIN")

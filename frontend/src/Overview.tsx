@@ -5,6 +5,7 @@ import { MindMap } from './MindMap'
 import { go, href } from './route'
 import { TranscriptBanner, TranscriptMenu, useTranscript } from './TranscriptMenu'
 import { LangSwitch, useT } from './i18n'
+import { useDigestJob } from './digestJob'
 
 type TreeState = { status: 'ready' | 'building' } | { status: 'error'; error: string }
 
@@ -17,6 +18,8 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
   useEffect(onRefresh, [onRefresh])
   const [st, setSt] = useState<TreeState>({ status: course.tree ? 'ready' : 'building' })
   const transcript = useTranscript(course, onRefresh)
+  const digest = useDigestJob(course, () => { onRefresh(); go({ name: 'digest', cid: course.id }) })
+  const lec = course.lecture
 
   const follow = useCallback((job: JobInfo, signal?: AbortSignal) => {
     setSt({ status: 'building' })
@@ -56,6 +59,22 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
         <span className="file" title={course.path}>{course.title}</span>
         <span className="spacer" />
         <span className="saved wide-only">{t.autosaved}</span>
+        {digest.running ? (
+          <button className="btn" disabled><span className="spin" />{t.summarizing}</button>
+        ) : lec.digest_at ? (
+          <>
+            {!!lec.new_since_digest && (
+              <button className="btn" onClick={digest.start} title={t.updateDigestTitle}>
+                <Icon name="refresh" />{t.updateDigest(lec.new_since_digest)}
+              </button>
+            )}
+            <a className="btn primary" href={href({ name: 'digest', cid: course.id })} style={{ textDecoration: 'none' }}>
+              {t.viewDigest}
+            </a>
+          </>
+        ) : (
+          <button className="btn primary" onClick={digest.start} title={t.finishLectureTitle}>{t.finishLecture}</button>
+        )}
         <TranscriptMenu course={course} t={transcript} />
         <a className="btn ghost" href={api.exportUrl(course.id)} download style={{ textDecoration: 'none' }}
           title={t.exportMdTitle}>{t.exportMd}</a>
@@ -69,6 +88,7 @@ export default function Overview({ course, onRefresh }: { course: Course; onRefr
         <LangSwitch />
       </header>
       <div className="intro">
+        {digest.error && <p className="merr">{t.digestFailed}{digest.error}</p>}
         <TranscriptBanner t={transcript} />
         {st.status === 'building' ? (
           <p className="warn">{t.mapBuilding}</p>
@@ -101,6 +121,11 @@ function ThumbGrid({ course }: { course: Course }) {
             <span className="pg">{p}</span>
             {noted.has(p) && <span className="noted"><Icon name="pen" /></span>}
             {n > 0 && <span className="badge">{n}</span>}
+            {(course.confused_counts?.[String(p)] ?? 0) > 0 && (
+              <span className="badge confused" title={t.confusedCount(course.confused_counts[String(p)])}>
+                {course.confused_counts[String(p)]}
+              </span>
+            )}
           </button>
         )
       })}

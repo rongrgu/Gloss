@@ -42,6 +42,18 @@ class Explanation:
     created_at: str
 
 
+@dataclass
+class Digest:
+    id: int
+    data: dict[str, Any]  # validated JSON (§15.3.4), thread references are full thread ids
+    content: str  # rendered Markdown
+    up_to_message_id: int
+    model: str | None
+    created_at: str
+
+
+LECTURE_STATUSES = ("new", "studying", "done")
+
 ANCHORS = ("slide_region", "explanation_text")
 QUOTE_MAX = 2000
 
@@ -60,6 +72,8 @@ class Thread:
     minimized: bool
     created_at: str
     quote: str | None = None
+    understood: bool | None = None  # M8: True "understood" / False "still confused" / None not marked
+    understood_at: str | None = None
 
     @property
     def rect(self) -> tuple[float, float, float, float] | None:
@@ -338,7 +352,7 @@ class Course:
             )
             return t
 
-    _THREAD_COLS = "id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at, quote"
+    _THREAD_COLS = "id, page, n, anchor_type, x, y, w, h, crop, minimized, created_at, quote, understood, understood_at"
 
     def get_thread(self, thread_id: str) -> Thread | None:
         row = self._one(f"SELECT {self._THREAD_COLS} FROM threads WHERE id = ?", (thread_id,))
@@ -355,6 +369,22 @@ class Course:
         with self._tx() as c:
             if c.execute("UPDATE threads SET minimized = ? WHERE id = ?", (int(minimized), thread_id)).rowcount == 0:
                 raise KeyError(thread_id)
+
+    def set_thread_understood(self, thread_id: str, value: bool | None) -> None:
+        """The student's own verdict on a question (§15.2): understood / still confused / unmark (None)."""
+        with self._tx() as c:
+            n = c.execute("UPDATE threads SET understood = ?, understood_at = ? WHERE id = ?",
+                          (None if value is None else int(value), None if value is None else now(), thread_id)).rowcount
+            if n == 0:
+                raise KeyError(thread_id)
+
+    def understood_counts(self) -> dict[int, dict[str, int]]:
+        """page -> {"confused": n, "understood": n}, for the mind-map badges."""
+        out: dict[int, dict[str, int]] = {}
+        for page, u, n in self._all("SELECT page, understood, COUNT(*) FROM threads WHERE understood IS NOT NULL "
+                                    "GROUP BY page, understood"):
+            out.setdefault(page, {"confused": 0, "understood": 0})["understood" if u else "confused"] = n
+        return out
 
     def delete_thread(self, thread_id: str) -> None:
         with self._tx() as c:
@@ -411,6 +441,38 @@ class Course:
     def pages_with_notes(self) -> set[int]:
         return {r[0] for r in self._all("SELECT page FROM notes WHERE content != ''")}
 
+    # --- lecture summaries (§15.3) ------------------------------------------
+
+    def add_digest(self, data: dict[str, Any], content: str, up_to_message_id: int, model: str | None) -> Digest:
+        with self._tx() as c:
+            at = now()
+            cur = c.execute("INSERT INTO digests (data, content, up_to_message_id, model, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (json.dumps(data, ensure_ascii=False), content, up_to_message_id, model, at))
+            return Digest(cur.lastrowid, data, content, up_to_message_id, model, at)
+
+    def latest_digest(self) -> Digest | None:
+        row = self._one("SELECT id, data, content, up_to_message_id, model, created_at FROM digests ORDER BY id DESC LIMIT 1")
+        return Digest(row[0], json.loads(row[1]), *row[2:]) if row else None
+
+    def max_message_id(self) -> int:
+        return self._one("SELECT COALESCE(MAX(id), 0) FROM messages")[0]
+
+    def messages_after(self, message_id: int) -> int:
+        """Questions and answers added since a watermark (a summary's `up_to_message_id`)."""
+        return self._one("SELECT COUNT(*) FROM messages WHERE id > ?", (message_id,))[0]
+
+    def lecture_status(self) -> str:
+        s = self.get_meta("lecture_status")
+        if s in LECTURE_STATUSES:
+            return s
+        # files from before M9: anything studied counts as "studying"
+        return "studying" if self._one("SELECT 1 FROM threads UNION SELECT 1 FROM explanations LIMIT 1") else "new"
+
+    def set_lecture_status(self, status: str) -> None:
+        if status not in LECTURE_STATUSES:
+            raise ValueError(status)
+        self.set_meta("lecture_status", status)
+
     # --- ui state ----------------------------------------------------------
 
     def get_ui(self, key: str, default: Any = None) -> Any:
@@ -431,4 +493,4 @@ def _slide(row: tuple) -> Slide:
 
 
 def _thread(row: tuple) -> Thread:
-    return Thread(*row[:9], bool(row[9]), row[10], row[11])
+    return Thread(*row[:9], bool(row[9]), row[10], row[11], None if row[12] is None else bool(row[12]), row[13])

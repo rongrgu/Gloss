@@ -130,8 +130,8 @@ def test_closed_file_is_self_contained(tmp_path):
     assert not p.with_name("a.gloss-shm").exists()
 
 
-def test_v1_file_migrates_to_v2_keeping_threads(tmp_path):
-    """A file written by M1–M5 (schema v1) opens in M6: threads keep their data and gain `quote`."""
+def test_v1_file_migrates_to_latest_keeping_threads(tmp_path):
+    """A file written by M1–M5 (schema v1) opens today: threads keep their data and gain `quote`, `understood`."""
     p = tmp_path / "old.gloss"
     conn = sqlite3.connect(p, isolation_level=None)
     schema.migrate(conn, schema.MIGRATIONS[:1])  # exactly what v1 Gloss created
@@ -140,9 +140,28 @@ def test_v1_file_migrates_to_v2_keeping_threads(tmp_path):
                  "VALUES ('t1', 1, 1, 'slide_region', .1, .2, .3, .4, NULL, 1, 'then')")
     conn.close()
     with Course.open(p) as c:
-        assert c.get_meta("schema_version") == "2"
+        assert c.get_meta("schema_version") == str(schema.SCHEMA_VERSION)
         t = c.get_thread("t1")
-        assert t.rect == (.1, .2, .3, .4) and t.minimized and t.quote is None
+        assert t.rect == (.1, .2, .3, .4) and t.minimized and t.quote is None and t.understood is None
         q = c.create_thread(1, None, anchor_type="explanation_text", quote="  这一句  ")
         assert q.n == 2 and q.quote == "这一句" and q.rect is None
         assert c.get_thread(q.id) == q
+
+
+def test_v2_file_migrates_to_v3_with_understood(tmp_path):
+    """M8: a v2 (M6–M7) file gains threads.understood / understood_at, unmarked."""
+    p = tmp_path / "v2.gloss"
+    conn = sqlite3.connect(p, isolation_level=None)
+    schema.migrate(conn, schema.MIGRATIONS[:2])
+    conn.execute("INSERT INTO slides (page, text, image, text_blocks) VALUES (1, 't', x'00', '[]')")
+    conn.execute("INSERT INTO threads (id, page, n, anchor_type, minimized, created_at, quote) "
+                 "VALUES ('t1', 1, 1, 'explanation_text', 0, 'then', 'q')")
+    conn.close()
+    with Course.open(p) as c:
+        assert int(c.get_meta("schema_version")) >= 3
+        assert c.get_thread("t1").understood is None
+        c.set_thread_understood("t1", False)
+        t = c.get_thread("t1")
+        assert t.understood is False and t.understood_at
+        c.set_thread_understood("t1", None)
+        assert c.get_thread("t1").understood is None and c.get_thread("t1").understood_at is None

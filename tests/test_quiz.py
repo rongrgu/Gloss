@@ -165,3 +165,17 @@ def test_api_lectures_by_path_for_never_opened_files(app):
     assert events[-1]["type"] == "done", events
     assert provider.calls[0].course_tools.only and "L3（CMU/ML 第 3 讲：New）" in provider.calls[0].prompt
     assert "Attention" not in provider.calls[0].prompt.split("## 学生卡住过")[0]
+
+
+def test_latest_attempts_read_only(tmp_path):
+    st = QuizStore(tmp_path)
+    assert st.latest_attempts() == []
+    qid = st.create("Q", {}, None, [{"stem": "a", "topic": "t", "sources": [{"lecture": "c1", "page": 2}]},
+                                    {"stem": "b", "topic": "u", "sources": []}])
+    q1, q2 = (x["id"] for x in st.get(qid)["questions"])
+    st.add_attempt(q1, "A", False)
+    st.add_attempt(q1, "B", True)
+    st.add_attempt(q2, "", None)
+    got = {a["question_id"]: a for a in st.latest_attempts()}
+    assert got[q1]["correct"] == 1 and got[q1]["topic"] == "t" and got[q1]["sources"] == [{"lecture": "c1", "page": 2}]
+    assert got[q2]["correct"] is None

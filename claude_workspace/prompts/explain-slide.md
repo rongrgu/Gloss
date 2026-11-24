@@ -1,4 +1,4 @@
-<!-- 讲解一页 slide。可用变量：{{course_title}} {{page}} {{page_count}} {{outline}} {{prev_text}} {{text}} {{next_text}} {{transcript}} {{language}} -->
+<!-- 讲解一页 slide。可用变量：{{course_title}} {{page}} {{page_count}} {{outline}} {{prev_text}} {{text}} {{next_text}} {{transcript}} {{language}} {{weak_points}}（学习档案里相关的薄弱点，没有时为空，整段不出现） -->
 请为课件《{{course_title}}》的第 {{page}} / {{page_count}} 页写讲解。附图是这一页的原图。
 
 ## 整节课的结构
@@ -15,6 +15,7 @@
 
 ## 老师讲这一页时说的话（transcript，可能没有）
 {{transcript}}
+{{weak_points}}
 
 ## 要求
 - 用{{language}}。

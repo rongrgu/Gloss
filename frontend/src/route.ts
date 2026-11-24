@@ -4,7 +4,8 @@ export type Route =
   | { name: 'home'; folder: string } // folder: library-relative path, '' = the library root (§13.2)
   | { name: 'quiz'; folder: string; qid: string } // a pre-quiz stored in that folder (§13.6)
   | { name: 'overview'; cid: string }
-  | { name: 'slide'; cid: string; page: number }
+  | { name: 'digest'; cid: string } // the lecture's study summary (§15.3)
+  | { name: 'slide'; cid: string; page: number; thread?: string } // thread: open that question's dialog
 
 const decodePath = (p: string) => p.split('/').map(decodeURIComponent).join('/')
 const encodePath = (p: string) => p.split('/').map(encodeURIComponent).join('/')
@@ -14,17 +15,29 @@ export function parseHash(hash: string): Route {
   if (q) return { name: 'quiz', qid: q[1], folder: q[2] ? decodePath(q[2]) : '' }
   const f = hash.match(/^#\/f\/(.+)$/)
   if (f) return { name: 'home', folder: decodePath(f[1]) }
-  const m = hash.match(/^#\/c\/([^/]+)(?:\/p\/(\d+))?$/)
+  const d = hash.match(/^#\/c\/([^/]+)\/digest$/)
+  if (d) return { name: 'digest', cid: decodeURIComponent(d[1]) }
+  const m = hash.match(/^#\/c\/([^/]+)(?:\/p\/(\d+)(?:\/t\/([0-9a-f]+))?)?$/)
   if (!m) return { name: 'home', folder: '' }
   const cid = decodeURIComponent(m[1])
-  return m[2] ? { name: 'slide', cid, page: Number(m[2]) } : { name: 'overview', cid }
+  if (!m[2]) return { name: 'overview', cid }
+  return m[3] ? { name: 'slide', cid, page: Number(m[2]), thread: m[3] } : { name: 'slide', cid, page: Number(m[2]) }
 }
 
 export function href(r: Route): string {
   if (r.name === 'home') return r.folder ? `#/f/${encodePath(r.folder)}` : '#/'
   if (r.name === 'quiz') return `#/q/${r.qid}${r.folder ? '/' + encodePath(r.folder) : ''}`
   const base = `#/c/${encodeURIComponent(r.cid)}`
-  return r.name === 'slide' ? `${base}/p/${r.page}` : base
+  if (r.name === 'digest') return `${base}/digest`
+  return r.name === 'slide' ? `${base}/p/${r.page}${r.thread ? `/t/${r.thread}` : ''}` : base
+}
+
+/** `gloss:<course id>/<page>[/<thread id>]` links in a study summary (§15.3) -> an app route. */
+export function glossLink(url: string): Route | null {
+  const m = url.match(/^gloss:([^/]+)\/(\d+)(?:\/([0-9a-f]+))?$/)
+  if (!m) return null
+  const r: Route = { name: 'slide', cid: m[1], page: Number(m[2]) }
+  return m[3] ? { ...r, thread: m[3] } : r
 }
 
 export function go(r: Route, replace = false) {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .i18n import DEFAULT_LOCALE, tr
 from .store import Course
 
@@ -53,6 +55,11 @@ def export_markdown(course: Course, locale: str = DEFAULT_LOCALE) -> str:
             span = f"（{span}）" if locale == "zh" else f" ({span}) "
             out.append(f"- **{topic['title']}**{span}{topic.get('summary', '')}".rstrip())
         out.append("")
+
+    digest = course.latest_digest()  # §15.3: the latest study summary, links made plain (gloss: is app-only)
+    if digest:
+        body = re.sub(r"\[([^\]]+)\]\(gloss:[^)]*\)", r"\1", digest.content.strip())
+        out += [demote(body, 1), ""]
 
     for topic in topics:
         level = "###" if tree else "##"

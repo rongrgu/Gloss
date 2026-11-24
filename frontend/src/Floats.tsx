@@ -100,7 +100,7 @@ export function Composer({ anchor, quote, tick, z, onCancel, onSubmit }: {
 }
 
 export function ChatBox({ cid, thread, stream, queuedBehind, anchor, tick, z, onFront, onMinimize, onDelete,
-  onFollowUp, onRetry, onClip }: {
+  onFollowUp, onRetry, onClip, onUnderstood }: {
   cid: string
   thread: Thread
   stream: AnswerStream | undefined
@@ -114,6 +114,7 @@ export function ChatBox({ cid, thread, stream, queuedBehind, anchor, tick, z, on
   onFollowUp: (text: string) => Promise<void>
   onRetry: () => void
   onClip: (m: Message) => void
+  onUnderstood: (v: boolean | null) => void // §15.2; clicking the active one again clears it
 }) {
   const [draft, setDraft] = useState('')
   const m = useT()
@@ -154,19 +155,34 @@ export function ChatBox({ cid, thread, stream, queuedBehind, anchor, tick, z, on
             borderRadius: 5, border: '1px solid var(--line)', background: '#fff' }} />
         ) : <span className="qsnip" title={t.quote ?? ''}>“{t.quote}”</span>}
         <span className="ttl">{titleOf(t, m.newQuestion)}</span>
+        {t.understood !== null && (
+          <span className={'umark ' + (t.understood ? 'got' : 'confused')} role="img"
+            aria-label={t.understood ? m.gotIt : m.stillConfused} title={t.understood ? m.gotIt : m.stillConfused} />
+        )}
         <button className="iconbtn" aria-label={m.deleteQuestion} title={m.delete} disabled={busy}
           onClick={() => confirm(m.deleteQuestionConfirm(t.n)) && onDelete()}><Icon name="trash" /></button>
         <button className="iconbtn" aria-label={m.minimizeQuestion} title={m.minimize} onClick={onMinimize}><Icon name="min" /></button>
       </div>
       <div className="cbody" ref={body}
         onScroll={(e) => { const b = e.currentTarget; nearBottom.current = b.scrollHeight - b.scrollTop - b.clientHeight < 90 }}>
-        {t.messages.map((msg) => msg.role === 'user'
+        {t.messages.map((msg, i) => msg.role === 'user'
           ? <div key={msg.id} className="mq">{msg.content}</div>
           : (
             <div key={msg.id}>
               <Markdown className="ma" text={msg.content} />
               <div className="ma-actions">
                 <button className="linkbtn" onClick={() => onClip(msg)}><Icon name="pen" />{m.clipToNotes}</button>
+                {i === t.messages.length - 1 && !busy && (
+                  <span className="umarks" role="group" aria-label={m.understoodLabel}>
+                    {[true, false].map((v) => (
+                      <button key={String(v)} className={'chipbtn ' + (v ? 'got' : 'confused')} aria-pressed={t.understood === v}
+                        title={t.understood === v ? m.clearMark : undefined}
+                        onClick={() => onUnderstood(t.understood === v ? null : v)}>
+                        {v ? m.gotIt : m.stillConfused}
+                      </button>
+                    ))}
+                  </span>
+                )}
               </div>
             </div>
           ))}

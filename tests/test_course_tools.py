@@ -179,3 +179,90 @@ def test_readers_never_write(library, tmp_path):
             args = {"lecture": "L1", "page": 1, "query": "attention"} if name not in ("list_lectures", "study_profile") else {}
             call(s, name, args)
     assert f.read_bytes() == before
+
+
+# --- M8: understood marks and quiz results (§15.2) -------------------------------------------------
+
+def _mark(path, page, n, value):
+    with Course.open(path) as c:
+        t = next(t for t in c.list_threads(page) if t.n == n)
+        c.set_thread_understood(t.id, value)
+
+
+def test_confused_mark_ranks_first_and_understood_pages_drop_out(library):
+    root, _ = library
+    b = root / "CMU" / "ML" / "b.gloss"
+    with Course.open(b) as c:
+        t = c.create_thread(2, (0.1, 0.1, 0.2, 0.2))
+        c.add_message(t.id, "user", "多头是什么？")
+        c.add_message(t.id, "assistant", "几组注意力。")
+    with Scope(root, "CMU/ML") as s:
+        assert [(x.page, x.score) for x in s.study_profile()] == [(1, 5), (2, 2), (3, 1)]
+    _mark(b, 2, 1, False)  # page 2: still confused
+    with Scope(root, "CMU/ML") as s:
+        sig = s.study_profile()
+        assert sig[0].page == 2 and sig[0].confused == 1 and sig[0].score == 2 + 4
+        assert "标了还没懂 1 个" in s.study_profile_text()
+    _mark(b, 2, 1, True)  # understood: the only question on page 2 settled
+    _mark(b, 1, 1, True)  # page 1 has two questions; one understood is not enough
+    with Scope(root, "CMU/ML") as s:
+        pages = {x.page: x for x in s.study_profile()}
+        assert 2 not in pages and pages[1].understood == 1 and pages[1].score == 5 - 2
+    _mark(b, 1, 2, True)
+    with Scope(root, "CMU/ML") as s:
+        assert [x.page for x in s.study_profile()] == [3]  # only the note is left
+
+
+def _quiz(folder, cid, page, correct, topic="softmax"):
+    from gloss.quiz import QuizStore
+    st = QuizStore(folder)
+    qid = st.create("q", {}, None, [{"stem": "s", "topic": topic,
+                                     "sources": [{"lecture": cid, "label": "L1", "page": page}]}])
+    st.add_attempt(st.get(qid)["questions"][0]["id"], "A", correct)
+
+
+def test_quiz_results_feed_the_profile_from_any_level(library):
+    root, cid = library
+    _quiz(root / "CMU", cid, 2, False, "多头维度")  # a group-level quiz (above the course)
+    _quiz(root / "CMU" / "ML", cid, 3, True)
+    _quiz(root / "CMU" / "ML", "someone-else", 1, False)  # not a lecture in scope: ignored
+    with Scope(root, "CMU/ML") as s:
+        pages = {x.page: x for x in s.study_profile()}
+        assert pages[2].quiz_wrong == 1 and pages[2].score == 3 and pages[2].questions == 0
+        assert 3 not in pages  # a note (+1) and a right quiz answer (−1): nothing left to work on
+        text = s.study_profile_text()
+        assert "L1 第 2 页（缩放点积）：测验答错 1 次（多头维度）" in text and "0 个问题" not in text
+    with Scope(root, "CMU") as s:  # the group scope sees both quizzes too
+        assert any(x.page == 2 and x.quiz_wrong for x in s.study_profile())
+
+
+def test_wrong_quiz_answer_keeps_an_understood_page(library):
+    root, cid = library
+    b = root / "CMU" / "ML" / "b.gloss"
+    _mark(b, 1, 1, True)
+    _mark(b, 1, 2, True)
+    _quiz(root / "CMU" / "ML", cid, 1, False)
+    with Scope(root, "CMU/ML") as s:
+        p1 = next(x for x in s.study_profile() if x.page == 1)
+        assert p1.understood == 2 and p1.quiz_wrong == 1
+
+
+def test_v2_lecture_without_understood_column_still_reads(library):
+    root, _ = library
+    old = root / "CMU" / "ML" / "old.gloss"
+    import sqlite3
+
+    from gloss import schema
+    conn = sqlite3.connect(old, isolation_level=None)
+    schema.migrate(conn, schema.MIGRATIONS[:2])  # an M7-era file, never opened since
+    conn.execute("INSERT INTO meta VALUES ('title', 'Old'), ('course_id', 'old1')")
+    conn.execute("INSERT INTO slides (page, text, image, text_blocks) VALUES (1, 'old', x'00', '[]')")
+    conn.execute("INSERT INTO threads (id, page, n, anchor_type, minimized, created_at, quote) "
+                 "VALUES ('t1', 1, 1, 'explanation_text', 0, 'then', 'q')")
+    conn.execute("INSERT INTO messages (thread_id, role, content, created_at) VALUES ('t1', 'user', '?', 'then')")
+    conn.close()
+    with Scope(root, "CMU/ML") as s:
+        lec = s.by_course_id("old1")
+        assert lec.reader.threads()[0]["understood"] is None
+        assert any(x.lecture == lec.label for x in s.study_profile())
+    assert schema.get_version(sqlite3.connect(old)) == 2  # read-only: not migrated

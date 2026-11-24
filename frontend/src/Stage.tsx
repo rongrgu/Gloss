@@ -66,7 +66,8 @@ export const Stage = forwardRef<HTMLDivElement, Props>(function Stage(
         {threads.filter((t) => t.rect).map((t) => {
           const pin = <span className={'pin' + (busy.has(t.id) ? ' busy' : '')}>{t.n}</span>
           return t.minimized ? (
-            <button key={t.id} className="marker" style={pct(asSel(t))} title={titleOf(t, m.newQuestion)}
+            <button key={t.id} className={'marker' + (t.understood === false ? ' confused' : '')} style={pct(asSel(t))}
+              title={titleOf(t, m.newQuestion) + (t.understood === false ? ` · ${m.stillConfused}` : '')}
               aria-label={m.openQuestion(t.n, titleOf(t, m.newQuestion))} onClick={() => onOpenThread(t.id)}>{pin}</button>
           ) : (
             <div key={t.id} className="region" style={pct(asSel(t))}>{pin}</div>

@@ -55,15 +55,17 @@ const ThumbNode = memo(function ThumbNode({ data }: NodeProps<Node<Data>>) {
   const { course, noted } = useContext(MapCtx)
   const p = data.page!
   const n = course.question_counts[String(p)] ?? 0
+  const confused = course.confused_counts?.[String(p)] ?? 0
   const t = useT()
   return (
     <button className="thumb" onClick={() => go({ name: 'slide', cid: course.id, page: p })}
-      aria-label={t.pageAria(p, n, noted.has(p))}>
+      aria-label={t.pageAria(p, n, noted.has(p)) + (confused ? `, ${t.confusedCount(confused)}` : '')}>
       <Handle type="target" position={Position.Left} style={hidden} isConnectable={false} />
       <img src={api.imageUrl(course.id, p)} alt="" loading="lazy" style={{ height: data.h, objectFit: 'cover' }} />
       <span className="pg">{p}</span>
       {noted.has(p) && <span className="noted"><Icon name="pen" /></span>}
       {n > 0 && <span className="badge">{n}</span>}
+      {confused > 0 && <span className="badge confused" title={t.confusedCount(confused)}>{confused}</span>}
     </button>
   )
 })

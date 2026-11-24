@@ -41,6 +41,7 @@ class LectureReader:
         self.meta = meta
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(threads)")}
         self._quote = "quote" in cols  # schema v2
+        self._understood = "understood" in cols  # schema v3 (M8)
 
     def close(self) -> None:
         self.conn.close()
@@ -86,15 +87,17 @@ class LectureReader:
 
     def threads(self, page: int | None = None) -> list[dict[str, Any]]:
         q = "quote" if self._quote else "NULL"
-        sql = f"SELECT id, page, n, anchor_type, x, y, w, h, {q} FROM threads"
+        u = "understood" if self._understood else "NULL"
+        sql = f"SELECT id, page, n, anchor_type, x, y, w, h, {q}, {u} FROM threads"
         rows = self.conn.execute(sql + (" WHERE page = ?" if page else "") + " ORDER BY page, n",
                                  (page,) if page else ()).fetchall()
         out = []
-        for tid, p, n, anchor, x, y, w, h, quote in rows:
+        for tid, p, n, anchor, x, y, w, h, quote, understood in rows:
             msgs = self.conn.execute("SELECT role, content FROM messages WHERE thread_id = ? ORDER BY id",
                                      (tid,)).fetchall()
-            out.append({"page": p, "n": n, "anchor": anchor, "rect": (x, y, w, h) if x is not None else None,
-                        "quote": quote, "messages": msgs})
+            out.append({"id": tid, "page": p, "n": n, "anchor": anchor,
+                        "rect": (x, y, w, h) if x is not None else None, "quote": quote,
+                        "understood": None if understood is None else bool(understood), "messages": msgs})
         return out
 
     def notes(self, page: int | None = None) -> dict[int, str]:
@@ -125,6 +128,19 @@ class PageSignal:
     unanswered: int
     asked: list[str] = field(default_factory=list)
     topic: str = ""
+    confused: int = 0  # threads marked "still confused" (§15.2)
+    understood: int = 0  # threads marked "understood"
+    quiz_wrong: int = 0  # latest attempts on quiz questions citing this page
+    quiz_right: int = 0
+    quiz_topics: list[str] = field(default_factory=list)
+    weak_points: int = 0  # unresolved study-profile weak points with evidence on this page (§15.4.4)
+
+
+# §15.2.4: how much each signal moves a page's score. Tune here.
+W_QUESTION, W_FOLLOW_UP, W_NOTE = 2, 1, 1
+W_CONFUSED, W_UNDERSTOOD = 4, -2
+W_QUIZ_WRONG, W_QUIZ_RIGHT = 3, -1
+W_WEAK_POINT, W_RESOLVED_ONLY = 3, -2  # §15.4.4: pages that are evidence for weak points in the study profile
 
 
 class Scope:
@@ -271,8 +287,55 @@ class Scope:
             lines.append(f"- {lec.label} 第 {page} 页 · {where}：{snip}")
         return "\n".join(lines)
 
+    def quiz_attempts(self) -> list[dict[str, Any]]:
+        """Latest quiz answers that cite lectures in this scope (§15.2.3). Quizzes can live in this folder,
+        any folder below it, or any folder above it (a group-level quiz can span courses)."""
+        from .quiz import QuizStore  # quiz imports this module
+
+        base = self.folders.folder(self.folder)
+        dirs = {base, *[p for p in base.rglob("*") if p.is_dir() and not p.name.startswith(".")]}
+        p = base
+        while p != self.folders.root and p.parent.is_relative_to(self.folders.root):
+            p = p.parent
+            dirs.add(p)
+        ids = {lec.reader.course_id for lec in self.lectures if lec.reader.course_id}
+        out = []
+        for d in sorted(dirs):
+            for a in QuizStore(d).latest_attempts():
+                srcs = [s for s in a["sources"] if s.get("lecture") in ids]
+                if srcs and a["correct"] is not None:  # self-marked written answers may be unmarked
+                    out.append({**a, "sources": srcs})
+        return out
+
+    def weak_points(self) -> list[dict[str, Any]]:
+        """Weak points from the study profiles (§15.4) of the course folders in this scope, with evidence
+        mapped to lecture labels. Read-only."""
+        from .profile import ProfileStore  # profile imports folders/store only, but keep this module light
+
+        label = {lec.reader.course_id: lec.label for lec in self.lectures if lec.reader.course_id}
+        out = []
+        for d in sorted({lec.reader.path.parent for lec in self.lectures}):
+            for w in ProfileStore(d).weak_points():
+                w["pages"] = sorted({(label[e["lecture"]], e["page"]) for e in w["evidence"]
+                                     if e["lecture"] in label and e["page"]})
+                out.append(w)
+        return out
+
     def study_profile(self, limit: int = 30) -> list[PageSignal]:
-        """Where the student got stuck (§13.3): questions, follow-ups, notes, unanswered retries."""
+        """Where the student is stuck (§13.3, §15.2.4): questions, follow-ups, notes, the student's own
+        understood / confused marks, and quiz results. Pages the student has fully settled drop out."""
+        by_lecture: dict[str, list[dict[str, Any]]] = {}
+        for a in self.quiz_attempts():
+            for s in a["sources"]:
+                by_lecture.setdefault(s["lecture"], []).append({**a, "page": s["page"]})
+        weak_pages: dict[tuple[str, int], int] = {}
+        resolved_pages: set[tuple[str, int]] = set()
+        for w in self.weak_points():
+            for key in w["pages"]:
+                if w["status"] in ("open", "improving"):
+                    weak_pages[key] = weak_pages.get(key, 0) + 1
+                else:
+                    resolved_pages.add(key)
         signals = []
         for lec in self.lectures:
             r = lec.reader
@@ -290,10 +353,33 @@ class Scope:
                     s.unanswered += 1
                 if users and len(s.asked) < 3:
                     s.asked.append(_cut(users[0], 120))
+                if t["understood"] is True:
+                    s.understood += 1
+                elif t["understood"] is False:
+                    s.confused += 1
             for p in r.notes():
                 by_page.setdefault(p, PageSignal(lec.label, p, 0, 0, 0, False, 0)).has_note = True
+            for a in by_lecture.get(lec.reader.course_id, []):
+                s = by_page.setdefault(a["page"], PageSignal(lec.label, a["page"], 0, 0, 0, False, 0))
+                if a["correct"]:
+                    s.quiz_right += 1
+                else:
+                    s.quiz_wrong += 1
+                    if a["topic"] and a["topic"] not in s.quiz_topics and len(s.quiz_topics) < 3:
+                        s.quiz_topics.append(a["topic"])
+            for (label, page), n in weak_pages.items():
+                if label == lec.label:
+                    by_page.setdefault(page, PageSignal(lec.label, page, 0, 0, 0, False, 0)).weak_points = n
             for s in by_page.values():
-                s.score = 2 * s.questions + s.follow_ups + int(s.has_note)
+                if s.questions and s.understood == s.questions and not s.quiz_wrong and not s.weak_points:
+                    continue  # every question here marked understood, no wrong quiz answer: settled
+                s.score = max(0, W_QUESTION * s.questions + W_FOLLOW_UP * s.follow_ups + W_NOTE * int(s.has_note)
+                              + W_CONFUSED * s.confused + W_UNDERSTOOD * s.understood
+                              + W_QUIZ_WRONG * s.quiz_wrong + W_QUIZ_RIGHT * s.quiz_right
+                              + W_WEAK_POINT * s.weak_points
+                              + (W_RESOLVED_ONLY if (lec.label, s.page) in resolved_pages and not s.weak_points else 0))
+                if s.score == 0:
+                    continue
                 s.topic = topic_of.get(s.page, "")
                 signals.append(s)
         signals.sort(key=lambda s: (-s.score, s.lecture, s.page))
@@ -301,21 +387,40 @@ class Scope:
 
     def study_profile_text(self, limit: int = 30) -> str:
         sig = self.study_profile(limit)
+        active = [w for w in self.weak_points() if w["status"] in ("open", "improving")]
+        head = ""
+        if active:  # concept level first (§15.4.4), then pages
+            rows = []
+            for w in active:
+                where = "、".join(f"{lec} 第 {p} 页" for lec, p in w["pages"][:6])
+                status = "未解决" if w["status"] == "open" else "在好转"
+                rows.append(f"- {w['id']}（{status}）{w['concept']}：{w['summary']}" + (f"（{where}）" if where else ""))
+            head = "### 概念级薄弱点（学习档案）\n" + "\n".join(rows) + "\n\n### 按页\n"
         if not sig:
-            return "学生在这些讲次里还没有提问或记笔记。"
+            return head + "学生在这些讲次里还没有提问或记笔记。" if head else "学生在这些讲次里还没有提问或记笔记。"
         lines = []
         for s in sig:
-            bits = [f"{s.questions} 个问题"]
+            bits = [f"{s.questions} 个问题"] if s.questions else []
             if s.follow_ups:
                 bits.append(f"{s.follow_ups} 次追问")
             if s.has_note:
                 bits.append("有笔记")
             if s.unanswered:
                 bits.append(f"{s.unanswered} 个没答完")
+            if s.confused:
+                bits.append(f"标了还没懂 {s.confused} 个")
+            if s.understood:
+                bits.append(f"标了懂了 {s.understood} 个")
+            if s.quiz_wrong:
+                bits.append(f"测验答错 {s.quiz_wrong} 次" + (f"（{'、'.join(s.quiz_topics)}）" if s.quiz_topics else ""))
+            if s.quiz_right:
+                bits.append(f"测验答对 {s.quiz_right} 次")
+            if s.weak_points:
+                bits.append(f"学习档案里 {s.weak_points} 条薄弱点的证据在这一页")
             asked = "；".join(f"「{a}」" for a in s.asked)
             lines.append(f"- {s.lecture} 第 {s.page} 页{f'（{s.topic}）' if s.topic else ''}：{'，'.join(bits)}"
                          + (f"。问过：{asked}" if asked else ""))
-        return "\n".join(lines)
+        return head + "\n".join(lines)
 
 
 # --- tool table (shared by the MCP server and the Agent SDK wrapper) -------------------------

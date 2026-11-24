@@ -29,6 +29,13 @@ qa_retrieval = true
 # that fail are marked "needs review". Set to false to skip the check and save quota.
 quiz_verify = true
 
+# Study memory: "Finish lecture" has Claude summarize what you asked and where you are still stuck;
+# a course-wide study profile keeps those weak points by concept. Pick a model for the summaries:
+# digest_model = "sonnet"
+# Mention relevant weak points (at most three, only when the slide is related) in new explanations
+# and new question sessions. Set to false to keep explanations and answers independent of the profile.
+use_profile = true
+
 # Where newly imported courses (.gloss files) are saved.
 # library = "~/Gloss"
 

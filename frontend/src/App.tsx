@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, type Course } from './api'
 import Home from './Home'
 import QuizPage from './Quiz'
+import DigestPage from './Digest'
 import Overview from './Overview'
 import { go, pathFor, rememberPath, useRoute } from './route'
 import Workspace from './Workspace'
@@ -40,7 +41,7 @@ export default function App() {
         if (!live) return
         rememberPath(c.id, c.path)
         setCourse(c)
-        if (c.id !== cid) go(route.name === 'slide' ? { ...route, cid: c.id } : { name: 'overview', cid: c.id }, true)
+        if (c.id !== cid) go(route.name === 'slide' || route.name === 'digest' ? { ...route, cid: c.id } : { name: 'overview', cid: c.id }, true)
       })
       .catch((e) => live && setError(e instanceof ApiError && e.status === 404
         ? t.courseNotOpen : String(e)))
@@ -60,5 +61,6 @@ export default function App() {
   if (error) return <Home folder="" notice={error} onOpen={onOpen} />
   if (!course || course.id !== cid) return <div className="home"><p className="lead">{t.opening}</p></div>
   if (route.name === 'overview') return <Overview course={course} onRefresh={refreshCourse} />
-  return <Workspace key={course.id} course={course} page={route.page} onCourseChanged={refreshCourse} />
+  if (route.name === 'digest') return <DigestPage course={course} onRefresh={refreshCourse} />
+  return <Workspace key={course.id} course={course} page={route.page} thread={route.thread} onCourseChanged={refreshCourse} />
 }

@@ -28,6 +28,8 @@ from .i18n import LANGUAGE_FOR, Prefs
 from .ingest import IngestError, create_course
 from .jobs import JobManager
 from .quiz import TYPES, QuizMaker, QuizStore
+from .digest import Digester, digest_dict
+from .profile import STATUSES as WP_STATUSES, ProfileError, ProfileStore, Profiler, on_mark, on_quiz_answer
 from .providers import LLMProvider
 from .providers.claude_cli import ClaudeCLIProvider, find_claude
 from .store import Course, Message, Thread
@@ -150,7 +152,9 @@ class FollowUpBody(BaseModel):
 
 
 class ThreadPatch(BaseModel):
-    minimized: bool
+    """Either field may be sent alone; `understood: null` clears the mark (§15.2)."""
+    minimized: bool | None = None
+    understood: bool | None = None
 
 
 class NoteBody(BaseModel):
@@ -190,6 +194,16 @@ class AttemptBody(BaseModel):
     correct: bool | None = None  # None: not marked (e.g. revealed without answering)
 
 
+class WeakPointPatch(BaseModel):
+    status: str | None = None  # a manual status change pins the item (§15.4.1)
+    concept: str | None = None
+    summary: str | None = None
+
+
+class MergeBody(BaseModel):
+    into: str
+
+
 class ReorderBody(BaseModel):
     path: str  # the lecture being dragged
     before: str | None = None  # drop it before this lecture; None: at the end
@@ -221,13 +235,14 @@ def course_summary(c: Course, jobs: JobManager | None = None) -> dict[str, Any]:
         "aspect": round(slide_aspect(c), 4),
         "tree": c.get_tree(), "tree_job": tree_job.to_dict() if tree_job and not tree_job.finished else None,
         "question_counts": c.thread_counts(), "pages_with_notes": sorted(c.pages_with_notes()),
+        "confused_counts": {p: v["confused"] for p, v in c.understood_counts().items() if v["confused"]},
     }
 
 
 def thread_dict(t: Thread, messages: list[Message] | None = None) -> dict[str, Any]:
     d = {"id": t.id, "page": t.page, "n": t.n, "anchor_type": t.anchor_type,
          "rect": list(t.rect) if t.rect else None, "quote": t.quote,
-         "minimized": t.minimized, "created_at": t.created_at}
+         "minimized": t.minimized, "created_at": t.created_at, "understood": t.understood}
     if messages is not None:
         d["messages"] = [message_dict(m) for m in messages]
     return d
@@ -268,6 +283,10 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     library = Library(config.library, app_dir() / "recent.json")
     folders = Folders(config.library)
     quizzes = QuizMaker(tutor, config.library, model=config.quiz_model, verify=config.quiz_verify)
+    profiler = Profiler(tutor, config.library, model=config.digest_model)
+    digester = Digester(tutor, config.library, model=config.digest_model, profiler=profiler)
+    if config.use_profile:
+        tutor.weak_points = profiler.relevant
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -343,7 +362,18 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         d = course_summary(c, jobs)
         parent = c.path.resolve().parent
         d["folder"] = folders.rel(parent) if parent.is_relative_to(folders.root) else None
+        latest = c.latest_digest()
+        job = digester.active(c)
+        d["lecture"] = {"status": c.lecture_status(),
+                        "digest_at": latest.created_at if latest else None,
+                        "new_since_digest": c.messages_after(latest.up_to_message_id) if latest else None,
+                        "digest_job": job.to_dict() if job else None}
         return d
+
+    def opened(c: Course) -> Course:
+        if c.lecture_status() == "new":
+            c.set_lecture_status("studying")
+        return c
 
     def close_under(p: Path) -> None:
         """Close open lectures at or under `p` before moving them; refuse while Claude is working on one."""
@@ -431,12 +461,84 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         q = store.get(qid)
         if q is None or body.question_id not in {x["id"] for x in q["questions"]}:
             raise HTTPException(404, "no such question")
-        return store.add_attempt(body.question_id, body.answer, body.correct)
+        attempt = store.add_attempt(body.question_id, body.answer, body.correct)
+        # update B (§15.4.2): each source lecture's own course folder holds its profile
+        question = next(x for x in q["questions"] if x["id"] == body.question_id)
+        where = {info["course_id"]: p.parent for p, info in folders.all_lectures(folders.folder(folder)) if info["course_id"]}
+        by_folder: dict[Path, list] = {}
+        for s in question.get("sources", []):
+            if s.get("lecture") in where:
+                by_folder.setdefault(where[s["lecture"]], []).append(s)
+        for d, srcs in by_folder.items():
+            on_quiz_answer(d, {"correct": body.correct, "question_id": body.question_id, "topic": question.get("topic", ""),
+                               "stem": question.get("stem", ""), "sources": srcs})
+        return attempt
 
     @app.delete("/api/library/quizzes/{qid}")
     def delete_quiz(qid: str, folder: str = ""):
         QuizStore(folders.folder(folder)).delete(qid)
         return {"ok": True}
+
+    # --- study profile (§15.4) ---
+
+    def profile_dict(folder: str) -> dict[str, Any]:
+        d = folders.folder(folder)
+        store = ProfileStore(d)
+        lectures = {}
+        for i, (p, info) in enumerate(folders.lectures(d), 1):
+            if info["course_id"]:
+                lectures[info["course_id"]] = {"file": str(p), "title": info["title"], "number": i}
+        job = profiler.active(folder)
+        return {"weak_points": store.weak_points(), "pending": store.pending(), "revisions": store.revisions(),
+                "lectures": lectures, "job": job.to_dict() if job else None}
+
+    @app.get("/api/library/profile")
+    async def get_profile(folder: str = ""):
+        return profile_dict(folder)
+
+    @app.post("/api/library/profile/organize")
+    async def organize_profile(folder: str = ""):
+        return {"job": profiler.organize(folder).to_dict()}
+
+    @app.patch("/api/library/profile/{wid}")
+    def patch_weak_point(wid: str, body: WeakPointPatch, folder: str = ""):
+        store = ProfileStore(folders.folder(folder))
+        with store.change("manual") as ed:
+            if ed.get(wid) is None:
+                raise HTTPException(404, "no such weak point")
+            if body.status is not None:
+                if body.status not in WP_STATUSES:
+                    raise HTTPException(422, f"status must be one of {WP_STATUSES}")
+                ed.set_status(wid, body.status, "set by the student", pin=True)
+            if body.concept is not None or body.summary is not None:
+                ed.edit(wid, (body.concept or "").strip() or None, body.summary)
+        return profile_dict(folder)
+
+    @app.post("/api/library/profile/{wid}/merge")
+    def merge_weak_point(wid: str, body: MergeBody, folder: str = ""):
+        store = ProfileStore(folders.folder(folder))
+        with store.change("manual") as ed:
+            if ed.get(wid) is None or ed.get(body.into) is None or wid == body.into:
+                raise HTTPException(422, "bad ids")
+            ed.merge(wid, body.into, "merged by the student")
+        return profile_dict(folder)
+
+    @app.delete("/api/library/profile/{wid}")
+    def delete_weak_point(wid: str, folder: str = ""):
+        store = ProfileStore(folders.folder(folder))
+        with store.change("manual") as ed:
+            if ed.get(wid) is None:
+                raise HTTPException(404, "no such weak point")
+            ed.delete(wid)
+        return profile_dict(folder)
+
+    @app.post("/api/library/profile/undo")
+    def undo_profile(folder: str = ""):
+        try:
+            ProfileStore(folders.folder(folder)).undo()
+        except ProfileError as e:
+            raise HTTPException(409, str(e)) from e
+        return profile_dict(folder)
 
     @app.post("/api/library/reorder")
     def reorder(body: ReorderBody):
@@ -475,12 +577,12 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
                 course = create_course(pdf, out, title=title or None)
             except IngestError as e:
                 raise HTTPException(422, str(e)) from e
-        return summary(library.add(course))
+        return summary(opened(library.add(course)))
 
     @app.post("/api/courses/open")
     def open_course(body: OpenBody):
         try:
-            return summary(library.open(Path(body.path)))
+            return summary(opened(library.open(Path(body.path))))
         except FileNotFoundError as e:
             raise HTTPException(404, "file not found") from e
         except (schema.NotAGlossFile, schema.FileTooNew) as e:
@@ -532,6 +634,20 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         c = library.get(cid)
         job = tutor.build_tree(c, regenerate=regenerate)
         return {"tree": c.get_tree()} if job is None else {"job": job.to_dict()}
+
+    # --- lecture summary (§15.3) ---
+
+    @app.post("/api/courses/{cid}/digest")
+    async def make_digest(cid: str):
+        return {"job": digester.start(library.get(cid)).to_dict()}
+
+    @app.get("/api/courses/{cid}/digest")
+    def get_digest(cid: str):
+        c = library.get(cid)
+        d = c.latest_digest()
+        if d is None:
+            raise HTTPException(404, "no summary yet")
+        return digest_dict(c, d)
 
     @app.post("/api/courses/{cid}/close")
     def close_course(cid: str):
@@ -629,7 +745,14 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     def patch_thread(cid: str, tid: str, body: ThreadPatch):
         c = library.get(cid)
         thread_or_404(c, tid)
-        c.set_thread_minimized(tid, body.minimized)
+        sent = body.model_fields_set
+        if "minimized" in sent and body.minimized is not None:
+            c.set_thread_minimized(tid, body.minimized)
+        if "understood" in sent:
+            c.set_thread_understood(tid, body.understood)
+            folder = profiler.folder_of(c)
+            if folder is not None and (folder / "study.glossp").exists():  # update B (§15.4.2)
+                on_mark(folder, c.id, c.get_thread(tid).page, tid, body.understood)
         return {"ok": True}
 
     @app.delete("/api/courses/{cid}/threads/{tid}")

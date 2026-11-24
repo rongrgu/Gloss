@@ -3,6 +3,7 @@ import { api, type Course, type Lecture, type Listing, type RecentItem } from '.
 import { Brand, Icon } from './Icon'
 import { LangSwitch, useT, type Messages } from './i18n'
 import { QuizPanel } from './QuizPanel'
+import { ProfilePanel } from './ProfilePanel'
 import { href, rememberPath } from './route'
 
 type Drag = { path: string; kind: 'lecture' | 'folder' }
@@ -231,7 +232,11 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
                       <span className="num">{i + 1}</span>
                       <span className="row-txt">
                         <span className="row-title">{l.title || t.untitled}</span>
-                        <span className="row-meta">{l.error ? t.unreadable : t.lectureMeta(l.slide_count, l.questions)}</span>
+                        <span className="row-meta">
+                          {l.error ? t.unreadable : t.lectureMeta(l.slide_count, l.questions)}
+                          {!l.error && l.status !== 'new' && <span className={'status ' + l.status}>{t.statusName[l.status]}</span>}
+                          {!!l.new_since_digest && <span className="status fresh">{t.newSinceDigest(l.new_since_digest)}</span>}
+                        </span>
                       </span>
                     </button>
                     <RowMenu label={t.actions} items={[
@@ -260,6 +265,7 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
           ) : null}
         </section>
 
+        {listing && (listing.lectures.length > 0 || listing.has_study) && <ProfilePanel key={'p' + listing.path} listing={listing} />}
         {listing && listing.kind !== 'empty' && <QuizPanel key={listing.path} listing={listing} />}
 
         {root && recent.length > 0 && (

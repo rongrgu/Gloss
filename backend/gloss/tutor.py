@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,10 @@ SLIDE_TEXT_LIMIT = 1500  # chars per slide sent for tree building
 COVER_FRACTION = 0.3  # a text block counts as selected if this much of it is inside the rect
 
 
+# Variables that are a whole optional section: empty means the section is absent, not "（无）".
+OPTIONAL = {"weak_points"}
+
+
 class Prompts:
     """Markdown templates in claude_workspace/. `{{name}}` placeholders; a leading <!-- comment --> is dropped."""
 
@@ -63,8 +68,13 @@ class Prompts:
             if key not in values:
                 raise KeyError(f"prompts/{name}.md uses {{{{{key}}}}} but no value was given")
             v = values[key]
+            if key in OPTIONAL:
+                return "\n" + str(v).strip()  # a section of its own, after a blank line
             return str(v).strip() if v not in (None, "") else NONE
 
+        for key in OPTIONAL:  # an empty optional section disappears with its line
+            if key in values and not values[key]:
+                template = re.sub(r"\n?\{\{\s*" + key + r"\s*\}\}", "", template)
         return re.sub(r"\{\{\s*(\w+)\s*\}\}", sub, template)
 
 
@@ -154,6 +164,9 @@ class Tutor:
         self.workspace = Path(workspace)
         self.prompts = Prompts(workspace)
         self.language = language  # Claude's output language; the server changes it with the UI language (§9.3)
+        # (course, page) -> a "## 学生之前卡住过的地方" section, or "" (§15.5). Set by the server when
+        # `use_profile` is on; empty otherwise.
+        self.weak_points: Callable[[Course, int], str] = lambda course, page: ""
         self.locale = locale  # interface language, for the few user-visible strings made here
         # Q&A may Grep/Read the whole course (§8, M6) — only with a provider that has tools.
         self.retrieval = retrieval and getattr(provider, "supports_tools", True)
@@ -179,6 +192,7 @@ class Tutor:
                 next_text=_text(course, page + 1),
                 transcript=course.get_slide(page).transcript_span,
                 language=self.language,
+                weak_points=self.weak_points(course, page),
             )
             scratch = Scratch(self.workspace, course)
             done = await self._stream(job, prompt, [scratch.slide(page)], session=None, system=self.prompts.role(),
@@ -373,6 +387,7 @@ class Tutor:
             text=_text(course, page),
             transcript=course.get_slide(page).transcript_span,
             explanation=e.content if e else "",
+            weak_points=self.weak_points(course, page),
         )
 
     def _history(self, course: Course, history: list[tuple[Thread, Message]], first_ids: set[int]) -> str:
