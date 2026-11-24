@@ -28,6 +28,20 @@ describe('layoutMap', () => {
     expect(tp[1].y).toBeGreaterThanOrEqual(tp[0].y + tp[0].h)
   })
 
+  it('a topic taller than TOPIC_H (long summary) pushes the next row down', () => {
+    const tall = new Map([[0, 160]])
+    const { nodes } = layoutMap(topics, new Set(), 16 / 9, tall)
+    const [a, b] = nodes.filter((n) => n.kind === 'topic')
+    expect(a.h).toBe(160)
+    expect(b.y).toBeGreaterThanOrEqual(a.y + a.h)
+    // the first row's thumbs stay vertically centred on the taller topic
+    const t1 = nodes.find((n) => n.page === 1)!
+    expect(t1.y + t1.h / 2).toBeCloseTo(a.y + a.h / 2)
+    // measured heights below the floor are ignored
+    const small = layoutMap(topics, new Set(), 16 / 9, new Map([[0, 10]]))
+    expect(small.nodes.find((n) => n.id === 'topic-0')!.h).toBe(84)
+  })
+
   it('collapsed topics show a single "more" node', () => {
     const { nodes, edges } = layoutMap(topics, new Set([1]), 16 / 9)
     expect(nodes.filter((n) => n.kind === 'thumb').map((n) => n.page)).toEqual([1, 2])

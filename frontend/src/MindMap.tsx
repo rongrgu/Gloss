@@ -1,9 +1,9 @@
 import '@xyflow/react/dist/style.css'
 import {
-  Background, BackgroundVariant, Controls, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps,
-  type ReactFlowInstance, type Viewport,
+  Background, BackgroundVariant, Controls, Handle, Position, ReactFlow, type Edge, type Node, type NodeChange,
+  type NodeProps, type ReactFlowInstance, type Viewport,
 } from '@xyflow/react'
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Course } from './api'
 import { Icon } from './Icon'
 import { layoutMap, THUMB_W } from './mapLayout'
@@ -86,6 +86,10 @@ export function MindMap({ course }: { course: Course }) {
   const tree = course.tree!
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [ready, setReady] = useState(false)
+  // Rendered height of each topic node, reported by React Flow. Rows are laid out from these,
+  // so a summary that wraps to more lines never slides under the next topic.
+  const [topicH, setTopicH] = useState<ReadonlyMap<number, number>>(new Map())
+  const [measured, setMeasured] = useState(false)
   const flow = useRef<ReactFlowInstance<Node<Data>, Edge> | null>(null)
   const saved = useRef<Viewport | null>(null)
   const saveTimer = useRef<number>(undefined)
@@ -112,8 +116,40 @@ export function MindMap({ course }: { course: Course }) {
     return next
   })
 
+  // Nodes are controlled and their size comes from CSS, so we only read 'dimensions' changes
+  // (first render, font swap, language switch) and relayout when a topic's height really changes.
+  const onNodesChange = useCallback((changes: NodeChange<Node<Data>>[]) => {
+    setTopicH((cur) => {
+      let next: Map<number, number> | null = null
+      for (const c of changes) {
+        if (c.type !== 'dimensions' || !c.dimensions || !c.id.startsWith('topic-')) continue
+        const i = Number(c.id.slice('topic-'.length))
+        const h = Math.ceil(c.dimensions.height)
+        if (Math.abs((cur.get(i) ?? 0) - h) < 1) continue
+        next ??= new Map(cur)
+        next.set(i, h)
+      }
+      return next ?? cur
+    })
+  }, [])
+
+  // Hide the map until every topic has been measured once (avoids a one-frame overlap), with a
+  // fallback in case a measurement never arrives. Then refit if we are not restoring a saved view.
+  const allMeasured = tree.children.every((_, i) => topicH.has(i))
+  useEffect(() => {
+    if (measured || !ready) return
+    if (allMeasured) { setMeasured(true); return }
+    const t = window.setTimeout(() => setMeasured(true), 600)
+    return () => clearTimeout(t)
+  }, [allMeasured, measured, ready])
+  useEffect(() => {
+    if (measured && !saved.current) {
+      requestAnimationFrame(() => flow.current?.fitView({ padding: 0.08, maxZoom: 1 }))
+    }
+  }, [measured])
+
   const { nodes, edges } = useMemo(() => {
-    const L = layoutMap(tree.children, collapsed, course.aspect)
+    const L = layoutMap(tree.children, collapsed, course.aspect, topicH)
     const nodes: Node<Data>[] = L.nodes.map((n) => ({
       id: n.id, type: n.kind, position: { x: n.x, y: n.y },
       data: { topic: n.topic, page: n.page, color: n.color, h: n.kind === 'thumb' ? n.h : undefined },
@@ -124,7 +160,7 @@ export function MindMap({ course }: { course: Course }) {
       style: { stroke: e.color, strokeOpacity: 0.55, strokeWidth: 1.6 }, focusable: false,
     }))
     return { nodes, edges }
-  }, [tree, collapsed, course.aspect])
+  }, [tree, collapsed, course.aspect, topicH])
 
   const ctx = useMemo(() => ({ course, noted: new Set(course.pages_with_notes), collapsed, toggle }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,7 +170,8 @@ export function MindMap({ course }: { course: Course }) {
   return (
     <MapCtx.Provider value={ctx}>
       <ReactFlow
-        nodes={nodes} edges={edges} nodeTypes={nodeTypes}
+        nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange}
+        style={{ opacity: measured ? 1 : 0 }}
         nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}
         nodesFocusable={false} edgesFocusable={false}
         minZoom={0.2} maxZoom={2}
