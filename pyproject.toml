@@ -1,10 +1,20 @@
 [project]
-name = "gloss"
+name = "glossr"
 version = "0.1.0"
 description = "Ask questions right on your lecture slides. A local study app powered by your own Claude."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+keywords = ["study", "lecture slides", "claude", "learning", "pdf"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Education",
+]
 dependencies = [
     "fastapi>=0.143.0",
     "pymupdf>=1.24",
@@ -12,8 +22,15 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/rongrgu/gloss"
+Issues = "https://github.com/rongrgu/gloss/issues"
+
+# The distribution is named glossr ("gloss" is taken on PyPI); the package and command stay gloss.
+# Both commands exist so `uvx glossr` works without `--from`.
 [project.scripts]
 gloss = "gloss.cli:main"
+glossr = "gloss.cli:main"
 
 [project.optional-dependencies]
 api = [
@@ -29,6 +46,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/frontend", "/scripts", "/.github"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend/gloss"]

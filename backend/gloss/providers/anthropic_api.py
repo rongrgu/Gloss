@@ -1,6 +1,6 @@
 """Anthropic API provider (DESIGN.md §6): bills an API key instead of the Claude subscription.
 
-Install with `pip install 'gloss[api]'` and set `provider = "anthropic_api"` in config.toml.
+Install with `pip install 'glossr[api]'` and set `provider = "anthropic_api"` in config.toml.
 The key is read from ANTHROPIC_API_KEY.
 
 Differences from the CLI provider:
@@ -70,7 +70,7 @@ class AnthropicAPIProvider:
             try:
                 import anthropic
             except ImportError as e:
-                raise ProviderError("the API provider needs the anthropic SDK: pip install 'gloss[api]'") from e
+                raise ProviderError("the API provider needs the anthropic SDK: pip install 'glossr[api]'") from e
             key = api_key or os.environ.get("ANTHROPIC_API_KEY")
             if not key:
                 raise ProviderError("provider = \"anthropic_api\" needs ANTHROPIC_API_KEY to be set")

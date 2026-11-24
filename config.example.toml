@@ -2,7 +2,7 @@
 
 # claude_cli: uses your logged-in `claude` CLI and your subscription quota.
 # anthropic_api: calls the Anthropic API directly and bills the key in ANTHROPIC_API_KEY.
-#   Needs `pip install 'gloss[api]'` (or `uv sync --extra api`). No whole-course search with this
+#   Needs `pip install 'glossr[api]'` (or `uv sync --extra api`). No whole-course search with this
 #   provider, and every follow-up resends the slide's history (prompt caching keeps that cheap).
 provider = "claude_cli"
 

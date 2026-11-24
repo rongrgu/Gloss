@@ -59,7 +59,7 @@ def seed_workspace(src: Path, dst: Path) -> None:
 
 @dataclass
 class Config:
-    provider: str = "claude_cli"  # claude_cli (your Claude login) | anthropic_api (ANTHROPIC_API_KEY, `gloss[api]`)
+    provider: str = "claude_cli"  # claude_cli (your Claude login) | anthropic_api (ANTHROPIC_API_KEY, `glossr[api]`)
     model: str = "sonnet"
     concurrency: int = 2  # global cap on simultaneous LLM calls
     language: str | None = None  # explanation / answer language; None follows the interface language (§9.3)

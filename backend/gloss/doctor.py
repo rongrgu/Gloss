@@ -55,7 +55,7 @@ def api_checks() -> list[Check]:
         import anthropic
         sdk = Check("ok", "anthropic SDK", f"installed ({anthropic.__version__})")
     except ImportError:
-        sdk = Check("fail", "anthropic SDK", "missing: pip install 'gloss[api]' (or uv sync --extra api)")
+        sdk = Check("fail", "anthropic SDK", "missing: pip install 'glossr[api]' (or uv sync --extra api)")
     key = (Check("ok", "API key", "ANTHROPIC_API_KEY is set; calls are billed to it")
            if os.environ.get("ANTHROPIC_API_KEY")
            else Check("fail", "API key", "provider = \"anthropic_api\" needs ANTHROPIC_API_KEY"))

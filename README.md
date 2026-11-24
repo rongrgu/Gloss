@@ -27,20 +27,32 @@ You do **not** need Node.js: the web interface ships pre-built.
 
 ## Quick start
 
+Install from PyPI (the package is called `glossr`; the command is `gloss`):
+
 ```sh
-git clone <this repo> gloss && cd gloss
-uv run gloss doctor     # checks Python, claude, login, and the install
-uv run gloss            # starts the app and opens it in your browser
+uv tool install glossr  # or: pipx install glossr
+gloss doctor            # checks Python, claude, login, and the install
+gloss                   # starts the app and opens it in your browser
+```
+
+To try it without installing: `uvx glossr`. To update later: `uv tool upgrade glossr`.
+
+Running from a clone instead (for development, or the latest unreleased code):
+
+```sh
+git clone https://github.com/rongrgu/gloss && cd gloss
+uv run gloss doctor
+uv run gloss
 ```
 
 Then drop a PDF onto the home page. The first time you open a course, Claude organizes it into a mind map (one call, about 10–20 seconds). Each slide's explanation is generated the first time you stay on that slide for a moment, and then saved.
 
-Other commands:
+Other commands (prefix with `uv run` when running from a clone):
 
 ```sh
-uv run gloss --port 9000 --no-browser
-uv run gloss doctor --live          # also sends a tiny test prompt (uses a little quota)
-uv run gloss export course.gloss    # writes course.md
+gloss --port 9000 --no-browser
+gloss doctor --live          # also sends a tiny test prompt (uses a little quota)
+gloss export course.gloss    # writes course.md
 ```
 
 ## Using it
@@ -94,7 +106,7 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 
 ### Using an API key instead
 
-Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv sync --extra api`, or `pip install 'gloss[api]'`), and export `ANTHROPIC_API_KEY`. Calls are then billed to that key at API rates instead of counting toward your Claude plan; `gloss doctor` checks the setup. Differences: answers can't search the rest of the course and pre-quizzes aren't available (both need tools, which this route doesn't have), and every follow-up resends the slide's earlier questions and answers (prompt caching keeps the repeated part cheap). On models that support it, Gloss turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another automatically.
+Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv tool install 'glossr[api]'`, `pip install 'glossr[api]'`, or `uv sync --extra api` in a clone), and export `ANTHROPIC_API_KEY`. Calls are then billed to that key at API rates instead of counting toward your Claude plan; `gloss doctor` checks the setup. Differences: answers can't search the rest of the course and pre-quizzes aren't available (both need tools, which this route doesn't have), and every follow-up resends the slide's earlier questions and answers (prompt caching keeps the repeated part cheap). On models that support it, Gloss turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another automatically.
 
 **Changing how Claude explains things:** the prompts are plain Markdown in `claude_workspace/` (`CLAUDE.md` for the tutor's role, `prompts/*.md` for each task). Edit them to change the style, for example exam-focused or more concise. Changes apply to new explanations and to new question sessions.
 
