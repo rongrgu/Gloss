@@ -20,7 +20,7 @@ Feeding slides straight into a chat gives you one long linear transcript where f
 ## Requirements
 
 - **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
-- **Claude Code**, installed and logged in with your Claude account (run `claude` once and use `/login`). Gloss calls the `claude` command on your machine; it never sees your credentials.
+- **@[Claude Code]**, installed and logged in with your Claude account (run `claude` once and use `/login`). Gloss calls the `claude` command on your machine; it never sees your credentials.
 - A Claude plan with Claude Code access. Explanations and answers count toward your plan's usage limits, so Pro users may want a lighter model (see [Configuration](#configuration)).
 
 You do **not** need Node.js: the web interface ships pre-built.
