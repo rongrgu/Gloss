@@ -3,14 +3,13 @@ name = "glossr"
 version = "0.3.1"
 description = "Ask questions right on your lecture slides. A local study app powered by your own Claude."
 readme = "README.md"
-license = "MIT"
+license = "FSL-1.1-ALv2"
 requires-python = ">=3.11"
 keywords = ["study", "lecture slides", "claude", "learning", "pdf"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Intended Audience :: Education",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Topic :: Education",
