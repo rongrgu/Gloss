@@ -78,7 +78,7 @@ A `.gloss` file is self-contained: send it to a classmate and they can read ever
 - **Everything stays on your computer.** Courses are saved as `.gloss` files (by default in `~/Gloss/`). The recent-files list lives in `~/.gloss/`. Gloss runs a small web server on your own machine (`127.0.0.1`) and has no cloud service, no account, no telemetry.
 - **What goes to Anthropic:** when you ask for an explanation, a question, or a mind map, Gloss runs your `claude` command with the relevant slide text and images, so that content is processed by Anthropic under your account, exactly as if you had pasted it into Claude Code yourself.
 - **It uses your Claude login and your plan's usage.** Gloss does not log you in, store tokens, or proxy anyone else's account. Each person runs their own copy with their own account.
-- **About Anthropic's terms:** Anthropic does not allow third-party products to offer claude.ai login or to use people's subscription usage unless approved, and expects commercial products to use API keys. Gloss is a free, open-source tool that you run yourself, driving your own locally installed Claude Code. It is not affiliated with or endorsed by Anthropic. Whether Claude Code usage keeps counting toward subscription limits is up to Anthropic and may change; you can switch Gloss to an API key instead (see [Using an API key](#using-an-api-key-instead)).
+- **About Anthropic's terms:** Anthropic does not allow third-party products to offer claude.ai login or to use people's subscription usage unless approved, and expects commercial products to use API keys. Gloss is a free, source-available tool that you run yourself, driving your own locally installed Claude Code. It is not affiliated with or endorsed by Anthropic. Whether Claude Code usage keeps counting toward subscription limits is up to Anthropic and may change; you can switch Gloss to an API key instead (see [Using an API key](#using-an-api-key-instead)).
 - **`ANTHROPIC_API_KEY`:** if this is set in your environment, Claude Code bills that API key instead of your subscription. Gloss removes it when it calls `claude`, and `gloss doctor` warns you if it's set.
 - **Locked down by default:** Claude is run with only read-only file tools (Read, plus Grep/Glob for searching the course), restricted to that course's own working folder (`--restricted`), so it can't run commands, edit files, or read anything else on your disk — not even your other courses. The local server only accepts requests from `localhost` and refuses requests from other websites.
 
@@ -149,4 +149,8 @@ npm run build                               # rebuilds backend/gloss/static (com
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[Functional Source License 1.1, Apache 2.0 Future License](LICENSE) (FSL-1.1-ALv2).
+
+You can use, modify and share Gloss for anything except offering it, or something substantially similar, as a competing commercial product or service. Personal study, teaching, research and internal use are all fine. Each release becomes available under the Apache License 2.0 two years after it is published.
+
+Versions up to and including 0.3.1 were released under the MIT License and remain available under it.
