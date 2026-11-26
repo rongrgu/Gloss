@@ -25,11 +25,12 @@ export interface Thread {
 
 export interface JobInfo {
   id: string
-  kind: 'explain' | 'answer' | 'tree' | 'align' | 'quiz' | 'digest' | 'profile'
+  kind: 'explain' | 'answer' | 'tree' | 'align' | 'quiz' | 'digest' | 'profile' | 'cheatsheet'
   status: 'queued' | 'running' | 'done' | 'error'
   page?: number
   thread_id?: string
   message_id?: number
+  sheet?: string // a cheatsheet revision (§16.4)
 }
 
 export interface Explanation {
@@ -160,7 +161,7 @@ export interface Profile {
   job: JobInfo | null
 }
 
-/** Pre-quiz (DESIGN.md §13.5). */
+/** Quizzes (DESIGN.md §13.5, §13.8). */
 export type QuestionType = 'mcq' | 'short' | 'derivation'
 export type QuizFocus = 'weak' | 'balanced' | 'uncovered'
 
@@ -203,8 +204,12 @@ export interface QuizSummary {
   count: number
   answered: number
   correct: number
-  options: { count: number; types: QuestionType[]; focus: QuizFocus; requested?: number }
+  options: {
+    count: number; types: QuestionType[]; focus: QuizFocus; requested?: number | null
+    mode?: QuizMode; exam?: { id: string; title: string } | null; instructions?: string
+  }
   model: string | null
+  folder?: string // where it is stored (deep listings on the library home, §17)
 }
 
 export interface Quiz {
@@ -216,12 +221,58 @@ export interface Quiz {
   questions: QuizQuestion[]
 }
 
+export type QuizMode = 'new' | 'replicate'
+
 export interface QuizRequest {
   folder: string
   count: number
   types: QuestionType[]
   focus: QuizFocus
   lectures?: string[] | null
+  mode?: QuizMode
+  exam?: string | null // the past exam to replicate
+  instructions?: string // the student's own requirements; win over count / types
+}
+
+/** The library home's catch-up (DESIGN.md §17). Times are ISO strings. */
+export interface CatchUpLecture { title: string; file: string; folder: string; page: number | null; slides: number; questions: number; status: string; active_at: string }
+export interface CatchUpData {
+  last: CatchUpLecture | null
+  continue: CatchUpLecture[]
+  confused: { thread: string; page: number; question: string; lecture: string; file: string; folder: string; at: string }[]
+  confused_total: number
+  quizzes: { id: string; title: string; folder: string; count: number; answered: number; correct: number; created_at: string }[]
+  weak_points: { concept: string; status: string; folder: string }[]
+  weak_total: number
+  sheet: { id: string; title: string; folder: string; updated_at: string } | null
+}
+
+/** Cheatsheets (DESIGN.md §16). `pages`: 0 = no limit. */
+export interface SheetOptions { lectures: string[]; exams: string[]; pages: 0 | 1 | 2; instructions: string }
+export interface SheetSummary {
+  id: string; title: string; options: SheetOptions; created_at: string; updated_at: string; versions: number
+  folder?: string // where it is stored, relative to the library (deep listings, §16.9)
+}
+export interface SheetVersion { id: number; source: 'generate' | 'edit' | 'ai' | 'restore' | 'rename'; note: string; created_at: string; chars: number }
+export interface SheetMessage { id: number; role: 'user' | 'assistant'; content: string; version_id: number | null; created_at: string }
+export interface Sheet extends Omit<SheetSummary, 'versions'> {
+  content: string
+  version: number
+  versions: SheetVersion[]
+  messages: SheetMessage[]
+  job: JobInfo | null // a revision running for this sheet
+}
+export interface SheetRequest { folder: string; lectures: string[] | null; exams: string[]; pages: 0 | 1 | 2; instructions: string }
+
+/** A past quiz / exam uploaded to a folder (§13.8). */
+export interface PastExam {
+  id: string
+  title: string
+  filename: string
+  kind?: 'pdf' | 'docx'
+  pages: number
+  created_at: string
+  folder: string // where it is stored, relative to the library
 }
 
 export interface SlideData {
@@ -250,8 +301,9 @@ export type JobEvent =
   | { type: 'reset' }
   | { type: 'tool'; name: string; target: string } // 'page:7' | 'course' | 'search:<pattern>' | 'file' | 'files'
   | { type: 'done'; message?: Message; explanation?: Explanation & { page: number }; tree?: Tree;
-      aligned_pages?: number[]; quiz_id?: string; count?: number; requested?: number; digest?: Digest }
-  | { type: 'phase'; phase: 'generate' | 'verify' | 'verify_failed' | 'profile' | 'profile_failed'; attempt?: number; message?: string }
+      aligned_pages?: number[]; quiz_id?: string; count?: number; requested?: number | null; digest?: Digest
+      sheet_id?: string; version?: number }
+  | { type: 'phase'; phase: 'generate' | 'verify' | 'verify_failed' | 'profile' | 'profile_failed' | 'revise'; attempt?: number; message?: string }
   | { type: 'error'; message: string }
 
 export class ApiError extends Error {
@@ -304,16 +356,57 @@ export const api = {
   rename: (path: string, name: string) => req<{ path: string }>('POST', '/api/library/rename', { path, name }),
   move: (path: string, to: string) => req<{ path: string }>('POST', '/api/library/move', { path, to }),
   reorder: (path: string, before: string | null) => req<Listing>('POST', '/api/library/reorder', { path, before }),
-  quizzes: (folder: string) =>
-    req<{ quizzes: QuizSummary[]; job: JobInfo | null }>('GET', `/api/library/quizzes?folder=${encodeURIComponent(folder)}`),
+  quizzes: (folder: string, deep = false) =>
+    req<{ quizzes: QuizSummary[]; job: JobInfo | null }>('GET', `/api/library/quizzes?folder=${encodeURIComponent(folder)}${deep ? '&deep=true' : ''}`),
+  exams: (folder: string) =>
+    req<{ exams: PastExam[] }>('GET', `/api/library/exams?folder=${encodeURIComponent(folder)}`),
+  uploadExam: (folder: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('folder', folder)
+    return req<PastExam>('POST', '/api/library/exams', fd)
+  },
+  examUrl: (e: PastExam) => `/api/library/exams/${e.id}/file?folder=${encodeURIComponent(e.folder)}`,
+  renameExam: (e: PastExam, title: string) =>
+    req<PastExam>('PATCH', `/api/library/exams/${e.id}?folder=${encodeURIComponent(e.folder)}`, { title }),
+  deleteExam: (e: PastExam) =>
+    req<{ ok: true }>('DELETE', `/api/library/exams/${e.id}?folder=${encodeURIComponent(e.folder)}`),
+  catchup: () => req<CatchUpData>('GET', '/api/library/catchup'),
+  sheets: (folder: string, deep = false) =>
+    req<{ sheets: SheetSummary[]; job: JobInfo | null }>('GET', `/api/library/cheatsheets?folder=${encodeURIComponent(folder)}${deep ? '&deep=true' : ''}`),
+  startSheet: (r: SheetRequest) => req<{ job: JobInfo }>('POST', '/api/library/cheatsheets', r),
+  sheet: (folder: string, sid: string) =>
+    req<Sheet>('GET', `/api/library/cheatsheets/${sid}?folder=${encodeURIComponent(folder)}`),
+  saveSheet: (folder: string, sid: string, content: string, base: number) =>
+    req<{ version: number; title: string }>('PUT', `/api/library/cheatsheets/${sid}?folder=${encodeURIComponent(folder)}`, { content, base }),
+  reviseSheet: (folder: string, sid: string, request: string, selection: string) =>
+    req<{ job: JobInfo }>('POST', `/api/library/cheatsheets/${sid}/revise?folder=${encodeURIComponent(folder)}`, { request, selection }),
+  restoreSheet: (folder: string, sid: string, version: number) =>
+    req<Sheet>('POST', `/api/library/cheatsheets/${sid}/restore?folder=${encodeURIComponent(folder)}`, { version }),
+  sheetVersion: (folder: string, sid: string, vid: number) =>
+    req<{ content: string }>('GET', `/api/library/cheatsheets/${sid}/versions/${vid}?folder=${encodeURIComponent(folder)}`),
+  sheetDocxUrl: (folder: string, sid: string) => `/api/library/cheatsheets/${sid}/export.docx?folder=${encodeURIComponent(folder)}`,
+  sheetMdUrl: (folder: string, sid: string) => `/api/library/cheatsheets/${sid}/export.md?folder=${encodeURIComponent(folder)}`,
+  renameSheet: (folder: string, sid: string, title: string) =>
+    req<Sheet>('PATCH', `/api/library/cheatsheets/${sid}?folder=${encodeURIComponent(folder)}`, { title }),
+  deleteSheet: (folder: string, sid: string) =>
+    req<{ ok: true }>('DELETE', `/api/library/cheatsheets/${sid}?folder=${encodeURIComponent(folder)}`),
   startQuiz: (r: QuizRequest) => req<{ job: JobInfo }>('POST', '/api/library/quizzes', r),
   quiz: (folder: string, qid: string) =>
     req<Quiz>('GET', `/api/library/quizzes/${qid}?folder=${encodeURIComponent(folder)}`),
   attempt: (folder: string, qid: string, question_id: string, answer: string, correct: boolean | null) =>
     req<Attempt>('POST', `/api/library/quizzes/${qid}/attempts?folder=${encodeURIComponent(folder)}`,
       { question_id, answer, correct }),
+  renameQuiz: (folder: string, qid: string, title: string) =>
+    req<{ id: string; title: string }>('PATCH', `/api/library/quizzes/${qid}?folder=${encodeURIComponent(folder)}`, { title }),
   deleteQuiz: (folder: string, qid: string) =>
     req<{ ok: true }>('DELETE', `/api/library/quizzes/${qid}?folder=${encodeURIComponent(folder)}`),
+  uploadGloss: (file: File, folder = '') => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('folder', folder)
+    return req<Course>('POST', '/api/courses/upload', fd)
+  },
   open: (path: string) => req<Course>('POST', '/api/courses/open', { path }),
   course: (cid: string) => req<Course>('GET', c(cid)),
   buildTree: (cid: string, regenerate = false) =>

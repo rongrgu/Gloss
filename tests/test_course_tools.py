@@ -173,10 +173,15 @@ def test_tool_targets_for_progress():
 def test_readers_never_write(library, tmp_path):
     root, _ = library
     f = root / "CMU" / "ML" / "b.gloss"
+    from make_pdfs import make_deck
+
+    from gloss.exams import Exams
+    Exams(root / "CMU").add("mid.pdf", make_deck())
     before = f.read_bytes()
     with Scope(root, "") as s:
         for name in TOOL_NAMES:
-            args = {"lecture": "L1", "page": 1, "query": "attention"} if name not in ("list_lectures", "study_profile") else {}
+            args = ({"lecture": "L1", "page": 1, "query": "attention", "exam": "E1"}
+                    if name not in ("list_lectures", "study_profile", "list_past_exams") else {})
             call(s, name, args)
     assert f.read_bytes() == before
 

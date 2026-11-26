@@ -100,7 +100,7 @@ def test_api_import_into_folder_and_list(env):  # noqa: F811
                     files={"file": ("lec1.pdf", __import__("make_pdfs").make_deck(), "application/pdf")})
     assert r.status_code == 200, r.text
     c = r.json()
-    assert c["folder"] == "Fall 2026/ML" and c["path"] == str(tmp / "lib" / "Fall 2026" / "ML" / "lec1.gloss")
+    assert c["folder"] == "Fall 2026/ML" and c["path"] == str(tmp / "lib" / "Fall 2026" / "ML" / "lec1.gls")
     lst = client.get("/api/library", params={"path": "Fall 2026/ML"}).json()
     assert lst["kind"] == "course" and lst["lectures"][0]["open"] is True
     assert client.get("/api/library", params={"path": "../x"}).status_code == 422
@@ -113,13 +113,13 @@ def test_api_move_closes_open_lecture_and_updates_recent(env):  # noqa: F811
     c = import_deck(client, "lec1.pdf")
     client.post("/api/library/folders", json={"parent": "", "name": "ML"})
     # open but idle: closed automatically, then moved
-    assert client.post("/api/library/move", json={"path": "lec1.gloss", "to": "ML"}).json()["path"] == "ML/lec1.gloss"
+    assert client.post("/api/library/move", json={"path": "lec1.gls", "to": "ML"}).json()["path"] == "ML/lec1.gls"
     assert client.get(f"/api/courses/{c['id']}").status_code == 404
     recent = client.get("/api/recent").json()
-    assert recent[0]["path"] == str(tmp / "lib" / "ML" / "lec1.gloss") and recent[0]["exists"]
+    assert recent[0]["path"] == str(tmp / "lib" / "ML" / "lec1.gls") and recent[0]["exists"]
     # renaming the folder keeps the recent entry valid too
     client.post("/api/library/rename", json={"path": "ML", "name": "Machine Learning"})
-    assert client.get("/api/recent").json()[0]["path"] == str(tmp / "lib" / "Machine Learning" / "lec1.gloss")
+    assert client.get("/api/recent").json()[0]["path"] == str(tmp / "lib" / "Machine Learning" / "lec1.gls")
 
 
 def test_api_reorder_writes_only_the_dragged_lecture(env):  # noqa: F811
@@ -134,13 +134,13 @@ def test_api_reorder_writes_only_the_dragged_lecture(env):  # noqa: F811
     titles = lambda lst: [x["title"] for x in lst["lectures"]]  # noqa: E731
     assert titles(client.get("/api/library", params={"path": "C"}).json()) == ["l1", "l2", "l3"]
     client.post(f"/api/courses/{ids[0]}/close")  # one closed, others open: both write paths
-    lst = client.post("/api/library/reorder", json={"path": "C/l3.gloss", "before": "C/l1.gloss"}).json()
+    lst = client.post("/api/library/reorder", json={"path": "C/l3.gls", "before": "C/l1.gls"}).json()
     assert titles(lst) == ["l3", "l1", "l2"]
-    lst = client.post("/api/library/reorder", json={"path": "C/l3.gloss", "before": None}).json()
+    lst = client.post("/api/library/reorder", json={"path": "C/l3.gls", "before": None}).json()
     assert titles(lst) == ["l1", "l2", "l3"]
-    lst = client.post("/api/library/reorder", json={"path": "C/l1.gloss", "before": "C/l3.gloss"}).json()
+    lst = client.post("/api/library/reorder", json={"path": "C/l1.gls", "before": "C/l3.gls"}).json()
     assert titles(lst) == ["l2", "l1", "l3"]
-    assert client.post("/api/library/reorder", json={"path": "C/l1.gloss", "before": "C/zz.gloss"}).status_code == 422
+    assert client.post("/api/library/reorder", json={"path": "C/l1.gls", "before": "C/zz.gls"}).status_code == 422
 
 
 def test_api_reorder_renumbers_when_keys_collide(env):  # noqa: F811
@@ -153,9 +153,9 @@ def test_api_reorder_renumbers_when_keys_collide(env):  # noqa: F811
         lst = client.get("/api/library", params={"path": "C"}).json()
         cid = next(x["course_id"] for x in lst["lectures"] if x["title"] == n)
         client.post(f"/api/courses/{cid}/close") if cid else None
-        with Course.open(tmp / "lib" / "C" / f"{n}.gloss") as c:
+        with Course.open(tmp / "lib" / "C" / f"{n}.gls") as c:
             c.set_meta("sort_key", repr(key))
-    lst = client.post("/api/library/reorder", json={"path": "C/c.gloss", "before": "C/b.gloss"}).json()
+    lst = client.post("/api/library/reorder", json={"path": "C/c.gls", "before": "C/b.gls"}).json()
     assert [x["title"] for x in lst["lectures"]] == ["a", "c", "b"]
     assert [x["sort_key"] for x in lst["lectures"]] == [1.0, 2.0, 3.0]
 
@@ -169,7 +169,19 @@ def test_api_move_refused_while_claude_works(env):  # noqa: F811
     from gloss.jobs import Job
     app_jobs._jobs[f"{c['id']}:explain:1"] = Job(f"{c['id']}:explain:1", "explain")  # unfinished
     try:
-        r = client.post("/api/library/move", json={"path": "lec1.gloss", "to": "ML"})
-        assert r.status_code == 409 and "Claude" in r.json()["detail"]
+        r = client.post("/api/library/move", json={"path": "lec1.gls", "to": "ML"})
+        assert r.status_code == 409 and "Gloss" in r.json()["detail"]
     finally:
         del app_jobs._jobs[f"{c['id']}:explain:1"]
+
+
+def test_old_gloss_files_still_listed_and_keep_their_extension(tmp_path):
+    """0.4 names new lectures .gls; .gloss files from earlier versions are used as they are."""
+    root = tmp_path / "lib"
+    (root / "C").mkdir(parents=True)
+    lecture(root / "C" / "old.gloss", "Old")
+    lecture(root / "C" / "new.gls", "New")
+    f = Folders(root)
+    assert sorted(p.name for p, _ in f.lectures(root / "C")) == ["new.gls", "old.gloss"]
+    assert f.rename("C/old.gloss", "Renamed")[1].name == "Renamed.gloss"
+    assert f.rename("C/new.gls", "Fresh")[1].name == "Fresh.gls"

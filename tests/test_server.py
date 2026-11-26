@@ -43,9 +43,9 @@ def test_import_and_reopen(env):
     client, _, tmp = env
     c = import_deck(client)
     assert c["title"] == "lec7" and c["slide_count"] == 3
-    assert c["path"] == str(tmp / "lib" / "lec7.gloss")
+    assert c["path"] == str(tmp / "lib" / "lec7.gls")
     c2 = import_deck(client)
-    assert c2["path"].endswith("lec7-2.gloss")
+    assert c2["path"].endswith("lec7-2.gls")
     recent = client.get("/api/recent").json()
     assert [r["path"] for r in recent] == [c2["path"], c["path"]] and recent[0]["exists"]
     client.post(f"/api/courses/{c['id']}/close")

@@ -1,6 +1,6 @@
 """The library as a folder tree (DESIGN.md §13.2).
 
-A lecture is one `.gloss`; a course is a folder that directly holds lectures; a group is
+A lecture is one `.gls` file (`.gloss` before 0.4, still read); a course is a folder that directly holds lectures; a group is
 a folder that only holds folders. Any depth, any names: the file system is the data model.
 Paths in the API are relative to the library root with `/` separators ('' is the root).
 """
@@ -17,7 +17,8 @@ from typing import Any
 
 from . import schema
 
-LECTURE_SUFFIX = ".gloss"
+LECTURE_SUFFIX = ".gls"  # new lectures
+LECTURE_SUFFIXES = (".gls", ".gloss")  # .gloss: files made before 0.4, used as they are
 QUIZ_FILE = "quizzes.glossq"
 BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 IGNORED = {".DS_Store", "Thumbs.db", "desktop.ini"}
@@ -121,7 +122,7 @@ class Folders:
                 continue
             if e.is_dir():
                 folders.append(e)
-            elif e.suffix == LECTURE_SUFFIX:
+            elif e.suffix in LECTURE_SUFFIXES:
                 lectures.append(e)
         return sorted(folders, key=lambda p: natural_key(p.name)), lectures
 
@@ -188,8 +189,8 @@ class Folders:
     def rename(self, rel: str, name: str) -> tuple[Path, Path]:
         src = self._existing(rel)
         name = clean_name(name)
-        if src.is_file() and not name.endswith(LECTURE_SUFFIX):
-            name += LECTURE_SUFFIX
+        if src.is_file() and not name.endswith(LECTURE_SUFFIXES):
+            name += src.suffix  # a renamed lecture keeps its own extension
         dst = src.with_name(name)
         if dst == src:
             return src, dst

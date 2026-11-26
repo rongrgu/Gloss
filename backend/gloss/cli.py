@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = ap.add_subparsers(dest="cmd")
     d = sub.add_parser("doctor", help="check that Gloss can run here")
     d.add_argument("--live", action="store_true", help="also send a tiny test prompt (uses a little quota)")
-    e = sub.add_parser("export", help="export a .gloss course as Markdown")
+    e = sub.add_parser("export", help="export a Gloss lecture file (.gls) as Markdown")
     e.add_argument("file")
     e.add_argument("-o", "--output", help="output path (default: next to the file, .md)")
     m = sub.add_parser("mcp-serve", help="(internal) serve the course tools to claude over stdio")

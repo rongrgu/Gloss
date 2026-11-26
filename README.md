@@ -13,7 +13,7 @@ Import a PDF of lecture slides and Gloss gives you:
 - **Questions anchored to the slide**: drag a box around anything (a formula, a diagram) and ask about it. The answer appears next to that spot. Minimize it and a marker stays on the slide; click it later to pick the conversation back up. You can also select a sentence in the explanation and ask about just that.
 - **The lecturer's words, matched to each slide** (optional): upload a transcript (`.txt`, `.vtt`, `.srt`) and Claude works out which part of the talk goes with which slide. Explanations and answers then draw on what was actually said in class.
 - **Answers that know the whole course**: when a question reaches beyond the current slide ("where was this symbol defined?", "how is this different from the method on slide 12?"), Claude searches the rest of the lecture and tells you which slide to look at.
-- **One file per course.** Everything — the slides, explanations, every question and answer, your notes and layout — is saved in a single `.gloss` file as you go. There is no save button. Close it, reopen it, it's all there.
+- **One file per course.** Everything — the slides, explanations, every question and answer, your notes and layout — is saved in a single `.gls` file as you go (files from before 0.4 end in `.gloss` and keep working). There is no save button. Close it, reopen it, it's all there.
 
 Feeding slides straight into a chat gives you one long linear transcript where follow-ups lose track of which part of which slide they were about. Gloss keeps each question attached to the place it came from.
 
@@ -52,7 +52,7 @@ Other commands (prefix with `uv run` when running from a clone):
 ```sh
 gloss --port 9000 --no-browser
 gloss doctor --live          # also sends a tiny test prompt (uses a little quota)
-gloss export course.gloss    # writes course.md
+gloss export course.gls      # writes course.md
 ```
 
 ## Using it
@@ -64,18 +64,22 @@ gloss export course.gloss    # writes course.md
 - **Transcript** — on the course page, "Upload transcript". Claude aligns it to the slides (one call, usually under 20 seconds). Each slide's explanation panel can show its excerpt ("Transcript passage"). Explanations generated before the upload aren't redone automatically — use "Regenerate" on the slides you care about.
 - **Notes** — plain text per slide, saved automatically. "Clip to notes" under an answer copies the question and the answer's first paragraph into the page's notes.
 - **Session log** — shows exactly what was sent to Claude for this slide (for the curious).
-- **Library** — the home page is your library folder (`~/Gloss` by default). Organize it however you like: folders for school, year, term, course… A folder that holds lectures is a course. Lectures are listed in the order you imported them; drag to reorder, or drag onto a folder (or a breadcrumb) to move. "Import PDF" puts the new lecture in the folder you are looking at. Folders on disk are the source of truth, so organizing in Finder works too.
-- **Got it / still confused** — under each answer, mark whether you understand now. Unresolved questions turn orange on the slide and on the mind map, and pre-quizzes and summaries take your marks into account.
+- **Pick up where you left off** — the library home (library on the left; this and every course's quizzes on the right) tells you what you were studying last and on which slide (one click continues there), which questions are still marked “still confused”, which quiz you haven't finished, your open weak points and your latest cheatsheet. It is read from your files; no AI call.
+- **Library** — the home page is your library folder (`~/Gloss` by default). Organize it however you like: folders for school, year, term, course… A folder that holds lectures is a course. Lectures are listed in the order you imported them; drag to reorder, or drag onto a folder (or a breadcrumb) to move. "Import lecture slides" puts the new lecture in the folder you are looking at. Folders on disk are the source of truth, so organizing in Finder works too.
+- **Got it / still confused** — under each answer, mark whether you understand now. Unresolved questions turn orange on the slide and on the mind map, and quizzes and summaries take your marks into account.
 - **Finish lecture** — on the mind map, "Finish lecture" has Claude write a study summary from your questions, notes and quiz answers: what the lecture covered, what you asked (grouped by concept), what is still unclear, what you now understand, open questions, and slides worth reviewing. Every point links back to the question it came from. When you ask more later, "Update summary" refreshes it.
 - **Study profile** — each course keeps a list of what you still find unclear, by concept and with evidence (your questions, marks and quiz answers). Finishing a lecture updates it; quiz answers and marks move items between "still unclear", "improving" and "resolved" on their own. You can resolve, reopen, rename, merge or delete items, and undo the last automatic change. New explanations and question sessions mention a weak point when, and only when, the slide is related to it (turn this off with `use_profile = false`).
-- **Pre-quiz** — on any course (or any folder above it), "New pre-quiz" has Claude write practice questions for exam prep. It reads the slides and, above all, what you asked and noted while studying, so it targets where you got stuck, and it covers topics you never asked about too. Each question cites the slide it comes from, says why it was chosen, and has an answer and explanation; a second pass checks every answer key against the slides. Multiple choice is marked automatically; for written answers you compare with the reference answer and mark yourself. Generation takes about a minute and uses noticeably more quota than a question.
+- **Cheatsheet** — on a course's Study profile, "Generate cheatsheet" writes a printable summary from your own notes, the questions you asked (with the answers' key points) and what is still unclear, optionally looking at past exams. Pick the lectures and the length (1 page, 2 pages or no limit; A4, two columns). The cheatsheet opens in an editor that works like Word: type, format, add tables, click a formula to change it. Or ask Gloss for changes in the chat on the left (select text to change only that part). Every change is a version you can go back to. Print it to PDF or download it as a Word file; with [pandoc](https://pandoc.org) installed, formulas become editable Word equations.
+- **Quiz** — on any course (or any folder above it), "New quiz" has Gloss write practice questions for exam prep. It reads the slides and, above all, what you asked and noted while studying, so it targets where you got stuck, and it covers topics you never asked about too. Each question cites the slide it comes from, says why it was chosen, and has an answer and explanation; a second pass checks every answer key against the slides. Multiple choice is marked automatically; for written answers you compare with the reference answer and mark yourself. Generation takes about a minute and uses noticeably more quota than a question.
+  - **Practice exams / quizzes** — upload earlier quizzes or exams (PDF or Word .docx) with "Import exam / quiz"; they are listed under the course's Materials › Practice Exam / Quiz. New quizzes look at their question styles and difficulty, and **Replicate a past exam** writes a fresh set with the same structure: same question types, topics and difficulty, new numbers and conditions, each still tied to a slide.
+  - **Extra instructions** — say what you want in your own words, e.g. "6 multiple-choice and 2 derivation questions, focus on backpropagation from lecture 3". They take precedence over the count and type settings; true/false is asked as two-option multiple choice and fill-in-the-blank as short answer.
 - **Export** — "Export Markdown" on the course page (or `gloss export`) writes the map, explanations, questions and answers, and notes as one Markdown file.
 
-A `.gloss` file is self-contained: send it to a classmate and they can read everything in Gloss, even without Claude installed (they just can't ask new questions).
+A `.gls` file is self-contained: send it to a classmate and they can read everything in Gloss, even without Claude installed (they just can't ask new questions).
 
 ## Your data, your Claude account
 
-- **Everything stays on your computer.** Courses are saved as `.gloss` files (by default in `~/Gloss/`). The recent-files list lives in `~/.gloss/`. Gloss runs a small web server on your own machine (`127.0.0.1`) and has no cloud service, no account, no telemetry.
+- **Everything stays on your computer.** Courses are saved as `.gls` files (by default in `~/Gloss/`). The recent-files list lives in `~/.gloss/`. Gloss runs a small web server on your own machine (`127.0.0.1`) and has no cloud service, no account, no telemetry.
 - **What goes to Anthropic:** when you ask for an explanation, a question, or a mind map, Gloss runs your `claude` command with the relevant slide text and images, so that content is processed by Anthropic under your account, exactly as if you had pasted it into Claude Code yourself.
 - **It uses your Claude login and your plan's usage.** Gloss does not log you in, store tokens, or proxy anyone else's account. Each person runs their own copy with their own account.
 - **About Anthropic's terms:** Anthropic does not allow third-party products to offer claude.ai login or to use people's subscription usage unless approved, and expects commercial products to use API keys. Gloss is a free, source-available tool that you run yourself, driving your own locally installed Claude Code. It is not affiliated with or endorsed by Anthropic. Whether Claude Code usage keeps counting toward subscription limits is up to Anthropic and may change; you can switch Gloss to an API key instead (see [Using an API key](#using-an-api-key-instead)).
@@ -84,7 +88,7 @@ A `.gloss` file is self-contained: send it to a classmate and they can read ever
 
 ## Course materials and copyright
 
-Lecture slides, transcripts and recordings belong to their authors. Use Gloss with material you're allowed to use, and **don't commit course files or `.gloss` files to this repository** (they're in `.gitignore`). Tests generate their own PDFs.
+Lecture slides, transcripts and recordings belong to their authors. Use Gloss with material you're allowed to use, and **don't commit course files or `.gls` / `.gloss` files to this repository** (they're in `.gitignore`). Tests generate their own PDFs.
 
 ## Configuration
 
@@ -96,18 +100,18 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 | `language` | (unset) | language for explanations, answers and the mind map. Unset, it follows the interface language (English by default; switch with the 中文 / EN button in the top bar). Set it to pin one, e.g. `"中文"` |
 | `concurrency` | `2` | how many Claude calls may run at once (different slides) |
 | `qa_retrieval` | `true` | let answers search the rest of the course when a question needs it |
-| `quiz_model` | (unset) | model for pre-quiz generation; unset uses `model` (newer form: `[llm.models] quiz`) |
-| `quiz_verify` | `true` | check every pre-quiz answer key against the slides with a second call |
+| `quiz_model` | (unset) | model for quiz generation; unset uses `model` (newer form: `[llm.models] quiz`) |
+| `quiz_verify` | `true` | check every quiz answer key against the slides with a second call |
 | `digest_model` | (unset) | model for lecture summaries and study-profile updates; unset uses `model` (newer form: `[llm.models] digest`) |
 | `use_profile` | `true` | mention relevant weak points from the study profile in new explanations and question sessions |
 | `[llm] provider` | (detected) | which LLM answers: `claude`, `codex`, `anthropic_api` or `openai_api` (see below). Unset, Gloss uses the installed CLI, or asks on the home page when both are. The older top-level `provider = "claude_cli"` still works |
-| `[llm.models]` | (empty) | a model per use: `outline` (mind map, transcript alignment), `explain`, `qa`, `digest`, `quiz`; empty uses `model` |
+| `[llm.models]` | (empty) | a model per use: `outline` (mind map, transcript alignment), `explain`, `qa`, `digest`, `quiz`, `cheatsheet`; empty uses `model` |
 | `library` | `~/Gloss` | where imported courses are saved |
 | `claude_bin` / `codex_bin` | found on `PATH` | path to the `claude` / `codex` executable |
 
 ### Choosing the LLM: your CLI login, or an API key
 
-**You usually don't need to configure anything.** Gloss looks for Claude Code (`claude`) and Codex (`codex`) when it starts: if only one is installed it uses that one; if both are, the home page asks which to use (and lets you switch later); if neither is, the home page and `gloss doctor` tell you. `gloss doctor` shows which one is in use (`--live` sends a tiny test prompt).
+**You usually don't need to configure anything.** Gloss looks for Claude Code (`claude`) and Codex (`codex`) when it starts: if only one is installed it uses that one; if both are, the home page asks which to use; the one in use is shown next to the Gloss title at the top left, and clicking it lets you switch; if neither is, the home page and `gloss doctor` tell you. `gloss doctor` shows which one is in use (`--live` sends a tiny test prompt).
 
 To always use a particular backend, including the API ones, set `provider` under `[llm]` in `config.toml`:
 
@@ -119,10 +123,10 @@ To always use a particular backend, including the API ones, set `provider` under
 | `openai_api` | the OpenAI API (`pip install 'glossr[openai]'`) | per token, the key in `OPENAI_API_KEY` |
 
 - **CLIs use your own account and plan.** Gloss runs the CLI on your machine; it never sees your login. If `ANTHROPIC_API_KEY` (for `claude`) or `OPENAI_API_KEY` / `CODEX_API_KEY` (for `codex`) is set, Gloss removes it when calling the CLI so your plan is used, not the key (for codex, `codex_auth = "api_key"` under `[llm]` opts into the key).
-- **API keys are read from the environment only** — never from `config.toml`, never written to logs, `.gloss` files or exports.
+- **API keys are read from the environment only** — never from `config.toml`, never written to logs, `.gls` files or exports.
 - **Both CLIs run read-only.** The model can read the course's own working folder and nothing else is ever written by it; Gloss writes everything itself after checking it.
 - **The `codex` provider has not yet been tested against a real Codex CLI**; its flags follow Codex's documentation and source (DESIGN.md §6 lists what still needs checking).
-- **API providers differ in two ways:** they can't search the rest of the course or make pre-quizzes (both need tools), and every question resends the slide and its earlier Q&A. Gloss orders that context so the repeated part is served from the providers' prompt cache. With `anthropic_api`, models that support it get Anthropic's server-side refusal fallback. With `openai_api`, the default model is `gpt-5.5`; set `model` (or `[llm.models]`) to choose another.
+- **API providers differ in two ways:** they can't search the rest of the course or make quizzes (both need tools), and every question resends the slide and its earlier Q&A. Gloss orders that context so the repeated part is served from the providers' prompt cache. With `anthropic_api`, models that support it get Anthropic's server-side refusal fallback. With `openai_api`, the default model is `gpt-5.5`; set `model` (or `[llm.models]`) to choose another.
 - **Switching provider** keeps everything: a page's questions continue with the new provider, which is given the earlier Q&A on that page.
 
 **Changing how Claude explains things:** the prompts are plain Markdown in `claude_workspace/` (`CLAUDE.md` for the tutor's role, `prompts/*.md` for each task). Edit them to change the style, for example exam-focused or more concise. Changes apply to new explanations and to new question sessions.

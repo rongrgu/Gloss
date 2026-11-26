@@ -50,7 +50,7 @@ COVER_FRACTION = 0.3  # a text block counts as selected if this much of it is in
 
 
 # Variables that are a whole optional section: empty means the section is absent, not "（无）".
-OPTIONAL = {"weak_points"}
+OPTIONAL = {"weak_points", "past_exam", "exams_hint", "instructions", "selection"}  # empty: the section and its line disappear
 
 
 @dataclass
@@ -536,6 +536,8 @@ def tool_target(name: str, inp: dict) -> str:
             return f"slide:{lec}:{inp.get('page', '')}"
         if tool == "search_course":
             return f"search:{str(inp.get('query', ''))[:60]}"
+        if tool == "get_past_exam":
+            return f"exam:{inp.get('exam', '')}:{inp.get('page', '')}"
         if tool in ("get_questions", "get_notes", "get_outline"):
             return f"{tool.removeprefix('get_')}:{lec}"
         return tool

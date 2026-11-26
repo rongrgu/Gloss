@@ -57,7 +57,7 @@ def seed_workspace(src: Path, dst: Path) -> None:
             shutil.copyfile(f, target)
 
 
-PURPOSES = ("outline", "explain", "qa", "digest", "quiz")  # outline = mind map + transcript alignment
+PURPOSES = ("outline", "explain", "qa", "digest", "quiz", "cheatsheet")  # outline = mind map + transcript alignment
 
 
 @dataclass

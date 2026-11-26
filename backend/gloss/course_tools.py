@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import schema
+from .exams import Exams, ExamError, all_exams
 from .folders import Folders
 
 MAX_CHARS = 8000  # per tool result
@@ -118,6 +119,23 @@ class Lecture:
 
 
 @dataclass
+class PastExam:
+    """A past quiz / exam in the scope (§13.8): E1, E2, …"""
+    label: str
+    folder: str  # relative to the library
+    meta: dict[str, Any]
+    store: Exams
+
+    @property
+    def id(self) -> str:
+        return self.meta["id"]
+
+    @property
+    def name(self) -> str:
+        return f"{self.label}（{self.folder or '课件库'}：{self.meta.get('title', '')}，{self.meta.get('pages', 0)} 页）"
+
+
+@dataclass
 class PageSignal:
     lecture: str
     page: int
@@ -166,6 +184,8 @@ class Scope:
                 if not (lec.label in keep or lec.reader.course_id in keep):
                     lec.reader.close()
             self.lectures = [lec for lec in self.lectures if lec.label in keep or lec.reader.course_id in keep]
+        self.exams = [PastExam(f"E{i}", self.folders.rel(d), meta, Exams(d))
+                      for i, (d, meta) in enumerate(all_exams(base), 1)]
 
     def close(self) -> None:
         for lec in self.lectures:
@@ -185,6 +205,41 @@ class Scope:
 
     def by_course_id(self, cid: str) -> Lecture | None:
         return next((lec for lec in self.lectures if lec.reader.course_id == cid), None)
+
+    def exam(self, key: str) -> PastExam:
+        """By label (E1) or id."""
+        k = str(key).strip()
+        for e in self.exams:
+            if e.label == k.upper() or e.id == k:
+                return e
+        raise ToolError(f"没有试卷 {key}。" + (f"可用的有：{', '.join(e.label for e in self.exams)}" if self.exams
+                                              else "这个范围里没有往年试卷。"))
+
+    def list_past_exams(self) -> str:
+        if not self.exams:
+            return "这个范围里没有往年试卷。"
+        return "\n".join(f"- {e.name}" for e in self.exams)
+
+    def exam_text(self, key: str, page: int | None = None, limit: int = MAX_CHARS) -> str:
+        e = self.exam(key)
+        texts = e.store.texts(e.id)
+        if page is not None:
+            if not 1 <= int(page) <= len(texts):
+                raise ToolError(f"{e.label} 没有第 {page} 页（共 {len(texts)} 页）")
+            pages = [(int(page), texts[int(page) - 1])]
+        else:
+            pages = list(enumerate(texts, 1))
+        body = "\n\n".join(f"## 第 {n} 页\n{t or '（这一页没有可抽取的文字，用 image=true 看图）'}" for n, t in pages)
+        return _cut(f"# {e.name}\n\n{body}", limit)
+
+    def exam_image(self, key: str, page: int) -> bytes:
+        e = self.exam(key)
+        try:
+            return e.store.image(e.id, int(page))
+        except ExamError as err:
+            if e.meta.get("kind") == "docx":
+                raise ToolError(f"{e.label} 是 Word 文件，没有页面图片；看文字即可") from err
+            raise ToolError(f"{e.label} 没有第 {page} 页") from err
 
     # --- the tools ----------------------------------------------------------------
 
@@ -448,6 +503,12 @@ TOOLS: list[dict[str, Any]] = [
                      "required": ["query"]}},
     {"name": "study_profile", "description": "学生卡住过的页：按提问、追问、笔记加权排序。",
      "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}}},
+    {"name": "list_past_exams", "description": "学生上传的往年测验 / 试卷（E1、E2…）：标题、页数。",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "get_past_exam", "description": "某份往年试卷的文字（不给 page 时是全卷）。image=true（需要 page）时附上那一页的图，公式、图表、扫描件要看图。",
+     "inputSchema": {"type": "object", "properties": {
+         "exam": {"type": "string", "description": "如 E1"}, "page": {"type": "integer", "minimum": 1},
+         "image": {"type": "boolean"}}, "required": ["exam"]}},
 ]
 TOOL_NAMES = [t["name"] for t in TOOLS]
 
@@ -472,6 +533,17 @@ def call(scope: Scope, name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         text = scope.search_course(args["query"], args.get("lecture"))
     elif name == "study_profile":
         text = scope.study_profile_text(int(args.get("limit") or 30))
+    elif name == "list_past_exams":
+        text = scope.list_past_exams()
+    elif name == "get_past_exam":
+        page = args.get("page")
+        text = scope.exam_text(args["exam"], page)
+        if args.get("image"):
+            if page is None:
+                raise ToolError("image=true 需要同时给 page")
+            img = scope.exam_image(args["exam"], page)
+            return [{"type": "text", "text": text},
+                    {"type": "image", "mimeType": "image/png", "data": base64.b64encode(img).decode()}]
     else:
         raise ToolError(f"unknown tool {name}")
     if len(text) > MAX_CHARS:

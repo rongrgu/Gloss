@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 export type Route =
   | { name: 'home'; folder: string } // folder: library-relative path, '' = the library root (§13.2)
-  | { name: 'quiz'; folder: string; qid: string } // a pre-quiz stored in that folder (§13.6)
+  | { name: 'quiz'; folder: string; qid: string } // a quiz stored in that folder (§13.6)
+  | { name: 'sheet'; folder: string; sid: string } // a cheatsheet stored in that folder (§16.4)
   | { name: 'overview'; cid: string }
   | { name: 'digest'; cid: string } // the lecture's study summary (§15.3)
   | { name: 'slide'; cid: string; page: number; thread?: string } // thread: open that question's dialog
@@ -13,6 +14,8 @@ const encodePath = (p: string) => p.split('/').map(encodeURIComponent).join('/')
 export function parseHash(hash: string): Route {
   const q = hash.match(/^#\/q\/([0-9a-f]+)(?:\/(.+))?$/)
   if (q) return { name: 'quiz', qid: q[1], folder: q[2] ? decodePath(q[2]) : '' }
+  const s = hash.match(/^#\/s\/([0-9a-f]+)(?:\/(.+))?$/)
+  if (s) return { name: 'sheet', sid: s[1], folder: s[2] ? decodePath(s[2]) : '' }
   const f = hash.match(/^#\/f\/(.+)$/)
   if (f) return { name: 'home', folder: decodePath(f[1]) }
   const d = hash.match(/^#\/c\/([^/]+)\/digest$/)
@@ -27,6 +30,7 @@ export function parseHash(hash: string): Route {
 export function href(r: Route): string {
   if (r.name === 'home') return r.folder ? `#/f/${encodePath(r.folder)}` : '#/'
   if (r.name === 'quiz') return `#/q/${r.qid}${r.folder ? '/' + encodePath(r.folder) : ''}`
+  if (r.name === 'sheet') return `#/s/${r.sid}${r.folder ? '/' + encodePath(r.folder) : ''}`
   const base = `#/c/${encodeURIComponent(r.cid)}`
   if (r.name === 'digest') return `${base}/digest`
   return r.name === 'slide' ? `${base}/p/${r.page}${r.thread ? `/t/${r.thread}` : ''}` : base

@@ -29,11 +29,14 @@ export function Icon({ name, className, style }: { name: IconName; className?: s
   )
 }
 
-export function Brand() {
+/** The title; with `href` the logo and the name link there (the library home). `extra` sits on the same text
+ *  line, so it shares the title's baseline (the AI badge on the home page), and stays outside the link. */
+export function Brand({ extra, href }: { extra?: React.ReactNode; href?: string }) {
+  const icon = <Icon name="map" style={{ color: 'var(--accent)', strokeWidth: 2 }} />
   return (
     <span className="brand">
-      <Icon name="map" style={{ color: 'var(--accent)', strokeWidth: 2 }} />
-      Gloss
+      {href ? <a className="brand-home" href={href} tabIndex={-1} aria-hidden>{icon}</a> : icon}
+      <span>{href ? <a className="brand-home" href={href}>Gloss</a> : 'Gloss'}{extra}</span>
     </span>
   )
 }

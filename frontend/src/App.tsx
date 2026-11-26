@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { ApiError, api, type Course } from './api'
 import Home from './Home'
 import QuizPage from './Quiz'
@@ -8,10 +8,13 @@ import { go, pathFor, rememberPath, useRoute } from './route'
 import Workspace from './Workspace'
 import { useT } from './i18n'
 
+// The cheatsheet editor (TipTap) is big and only needed on that page: loaded on demand.
+const SheetPage = lazy(() => import('./Cheatsheet'))
+
 export default function App() {
   const t = useT()
   const route = useRoute()
-  const cid = route.name === 'home' || route.name === 'quiz' ? null : route.cid
+  const cid = route.name === 'home' || route.name === 'quiz' || route.name === 'sheet' ? null : route.cid
   const [course, setCourse] = useState<Course | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -58,6 +61,13 @@ export default function App() {
   const onOpen = (c: Course) => { rememberPath(c.id, c.path); go({ name: 'overview', cid: c.id }) }
   if (route.name === 'home') return <Home key={route.folder} folder={route.folder} onOpen={onOpen} />
   if (route.name === 'quiz') return <QuizPage key={route.qid} folder={route.folder} qid={route.qid} />
+  if (route.name === 'sheet') {
+    return (
+      <Suspense fallback={<div className="home"><p className="lead">{t.opening}</p></div>}>
+        <SheetPage key={route.sid} folder={route.folder} sid={route.sid} />
+      </Suspense>
+    )
+  }
   if (error) return <Home folder="" notice={error} onOpen={onOpen} />
   if (!course || course.id !== cid) return <div className="home"><p className="lead">{t.opening}</p></div>
   if (route.name === 'overview') return <Overview course={course} onRefresh={refreshCourse} />

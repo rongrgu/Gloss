@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { api, type Quiz, type QuizQuestion, type QuizSource } from './api'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { api, type Quiz, type QuizQuestion, type QuizSource, type SheetSummary } from './api'
 import { Brand, Icon } from './Icon'
 import { LangSwitch, useT } from './i18n'
 import { Markdown } from './Markdown'
@@ -7,8 +7,18 @@ import { LETTERS, mcqCorrect, resumeIndex, summarize } from './quizLogic'
 import { go, href, rememberPath } from './route'
 
 const POS_KEY = (qid: string) => `gloss.quiz.${qid}`
+const SHEET_KEY = (qid: string) => `gloss.quiz.sheet.${qid}` // the cheatsheet open next to this quiz (§16.9)
+const QuizSheet = lazy(() => import('./QuizSheet')) // the editor is big: only loaded when a sheet is opened
 
-/** Taking a pre-quiz, one question at a time, then the results (DESIGN.md §13.6). */
+type OpenSheet = { sid: string; folder: string }
+function savedSheet(qid: string): OpenSheet | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SHEET_KEY(qid)) ?? 'null')
+    return v && typeof v.sid === 'string' && typeof v.folder === 'string' ? v : null
+  } catch { return null } // storage unavailable
+}
+
+/** Taking a quiz, one question at a time, then the results (DESIGN.md §13.6). */
 export default function QuizPage({ folder, qid }: { folder: string; qid: string }) {
   const t = useT()
   const [quiz, setQuiz] = useState<Quiz | null>(null)
@@ -17,6 +27,19 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
   const [fresh, setFresh] = useState<Set<string>>(new Set()) // "start over": ignore earlier attempts
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [openSheet, setOpenSheet] = useState<OpenSheet | null>(() => savedSheet(qid))
+  const pickSheet = (s: OpenSheet | null) => {
+    setOpenSheet(s)
+    try { if (s) localStorage.setItem(SHEET_KEY(qid), JSON.stringify(s)); else localStorage.removeItem(SHEET_KEY(qid)) } catch { /* storage unavailable */ }
+  }
+  const withSheet = (main: React.ReactNode) => !openSheet ? main : (
+    <div className="quiz-split">
+      {main}
+      <Suspense fallback={<aside className="quiz-sheet"><p className="lead">{t.opening}</p></aside>}>
+        <QuizSheet key={openSheet.sid} folder={openSheet.folder} sid={openSheet.sid} onClose={() => pickSheet(null)} />
+      </Suspense>
+    </div>
+  )
 
   useEffect(() => {
     api.quiz(folder, qid).then((q) => {
@@ -37,10 +60,11 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
   const back = href({ name: 'home', folder })
   const header = (
     <header className="bar">
-      <a className="btn ghost" href={back} style={{ textDecoration: 'none' }}><Brand /></a>
+      <a className="btn ghost" href={back} style={{ textDecoration: 'none' }} title={t.upOneLevel}><Brand /></a>
       <a className="file" href={back}>{folder || t.library}</a>
       {quiz && <span className="file wide-only">· {quiz.title}</span>}
       <span className="spacer" />
+      <SheetPicker folder={folder} current={openSheet} onPick={pickSheet} />
       <LangSwitch />
     </header>
   )
@@ -81,7 +105,7 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
     return (
       <>
         {header}
-        <main className="home quiz">
+        {withSheet(<main className="home quiz">
           <h1>{t.resultsH}</h1>
           <p className="lead">{t.score(s.right, s.total)}{s.unmarked ? ` · ${t.unmarkedCount(s.unmarked)}` : ''}</p>
           <section className="card">
@@ -116,7 +140,7 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
             <button className="btn" onClick={startOver}>{t.startOver}</button>
             <a className="btn primary" href={back} style={{ textDecoration: 'none' }}>{t.backToFolder}</a>
           </div>
-        </main>
+        </main>)}
       </>
     )
   }
@@ -127,7 +151,7 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
   return (
     <>
       {header}
-      <main className="home quiz">
+      {withSheet(<main className="home quiz">
         <div className="quiz-top">
           <span className="row-meta">{t.questionOf(idx + 1, n)}</span>
           <span className="progress"><span style={{ width: `${((idx + 1) / n) * 100}%` }} /></span>
@@ -212,7 +236,47 @@ export default function QuizPage({ folder, qid }: { folder: string; qid: string 
             {idx === n - 1 ? t.finish : t.nextQ}<Icon name="next" />
           </button>
         </div>
-      </main>
+      </main>)}
     </>
+  )
+}
+
+
+/** "Cheatsheet" in the quiz's top bar: open one of this folder's cheatsheets next to the quiz (§16.9). */
+function SheetPicker({ folder, current, onPick }: { folder: string; current: OpenSheet | null; onPick: (s: OpenSheet | null) => void }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const [sheets, setSheets] = useState<SheetSummary[] | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    api.sheets(folder, true).then((r) => setSheets(r.sheets)).catch(() => setSheets([]))
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close) }
+  }, [open, folder])
+  return (
+    <div className="menu" ref={ref}>
+      <button className="btn" aria-expanded={open} aria-pressed={!!current} onClick={() => setOpen((o) => !o)}>
+        <Icon name="doc" />{t.sheetsH}<Icon name="chev" />
+      </button>
+      {open && (
+        <div className="menu-pop list sheet-pick" role="menu">
+          {sheets === null && <span className="row-meta">{t.opening}</span>}
+          {sheets?.length === 0 && <span className="tip">{t.noSheetsHere}</span>}
+          {sheets?.map((s) => (
+            <button key={s.id} role="menuitem" className={'btn ghost' + (current?.sid === s.id ? ' on' : '')}
+              onClick={() => { setOpen(false); onPick({ sid: s.id, folder: s.folder ?? folder }) }}>
+              <span className="row-txt"><span className="row-title">{s.title}</span>
+                <span className="row-meta">{s.folder && s.folder !== folder ? s.folder : ''}</span></span>
+            </button>
+          ))}
+          {current && <button role="menuitem" className="btn ghost" onClick={() => { setOpen(false); onPick(null) }}>{t.closeSheet}</button>}
+        </div>
+      )}
+    </div>
   )
 }

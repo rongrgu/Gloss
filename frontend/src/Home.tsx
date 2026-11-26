@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Course, type Lecture, type Listing, type ProviderInfo, type RecentItem } from './api'
+import { api, type Course, type Lecture, type Listing, type PastExam, type ProviderInfo } from './api'
 import { Brand, Icon } from './Icon'
 import { LangSwitch, useT, type Messages } from './i18n'
+import { Practice } from './Practice'
+import { RowMenu } from './RowMenu'
+import { CatchUp } from './CatchUp'
 import { QuizPanel } from './QuizPanel'
 import { ProfilePanel } from './ProfilePanel'
-import { href, rememberPath } from './route'
+import { go, href, rememberPath } from './route'
 
 type Drag = { path: string; kind: 'lecture' | 'folder' }
 
@@ -13,31 +16,32 @@ const inside = (p: string, dir: string) => p === dir || p.startsWith(dir + '/')
 
 /**
  * Home: a browser over the library folder tree (DESIGN.md §13.2). The root also shows the
- * intro, recent files and "open a file". Courses are folders that hold lectures (.gloss);
+ * catch-up and quizzes on the right at the root (§17), and "open a Gloss file". Courses are folders that hold lectures (.gls);
  * groups are any folders above them.
  */
 export default function Home({ folder, onOpen, notice }: { folder: string; onOpen: (c: Course) => void; notice?: string }) {
   const t = useT()
   const root = folder === ''
   const [listing, setListing] = useState<Listing | null>(null)
-  const [recent, setRecent] = useState<RecentItem[]>([])
   const [health, setHealth] = useState<ProviderInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [over, setOver] = useState(false)
-  const [path, setPath] = useState('')
+  const [opening, setOpening] = useState(false) // the "open a Gloss file" dialog
   const [moving, setMoving] = useState<{ path: string; name: string } | null>(null)
   const [target, setTarget] = useState<string | null>(null) // 'folder:<path>' | 'at:<index>'
   const drag = useRef<Drag | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const examRef = useRef<HTMLInputElement>(null)
+  const [exams, setExams] = useState<PastExam[]>([]) // Materials › Practice Exam / Quiz: stored directly in this folder
 
   const reload = useCallback(() => {
     api.library(folder).then(setListing).catch((e) => setError(e instanceof Error ? e.message : String(e)))
+    api.exams(folder).then((r) => setExams(r.exams.filter((e) => e.folder === folder))).catch(() => {})
   }, [folder])
 
   useEffect(() => {
     reload()
-    if (root) api.recent().then(setRecent).catch(() => {})
     api.health().then(setHealth).catch(() => setError(t.backendDown))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload])
@@ -68,6 +72,22 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
     run(t.importing(file.name), () => api.importPdf(file, folder))
   }
 
+  const importExams = async (files: FileList | null) => {
+    if (!files?.length) return
+    setError(null)
+    try {
+      for (const f of Array.from(files)) {
+        setBusy(t.importing(f.name))
+        const e = await api.uploadExam(folder, f)
+        setExams((xs) => [...xs, e])
+      }
+    } catch (e) {
+      setError(t.examUploadFailed + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   /** After a lecture moves, keep old links to it working (route.ts remembers id -> path). */
   const remember = (l: Lecture | undefined, newPath: string) => {
     if (l?.course_id && listing) rememberPath(l.course_id, `${listing.root}/${newPath}`)
@@ -84,6 +104,22 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
     const name = prompt(t.folderName)?.trim()
     if (name) act(() => api.mkdir(folder, name))
   }
+  /** The first course folder of a new library: create it and go in, where its lectures are imported. */
+  const startCourse = async () => {
+    const name = prompt(t.folderName)?.trim()
+    if (!name) return
+    try { go({ name: 'home', folder: (await api.mkdir(folder, name)).path }) } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+  }
+  // A brand-new library: nothing but "create a course folder" (imports belong inside a course).
+  const fresh = root && !!listing && !listing.folders.length && !listing.lectures.length && !exams.length
+  // Two columns (§17): the library on the left; on the right the catch-up (root) or the study profile (a folder),
+  // and the quizzes. Both columns fill the window; long lists scroll inside their card.
+  const hasProfile = !root && !!listing && (listing.lectures.length > 0 || listing.has_study)
+  const hasQuiz = !root && !!listing && listing.kind !== 'empty'
+  const homeGrid = !!listing && (root ? !fresh : hasProfile || hasQuiz)
+  // Course folders are made at the root and in group folders, not inside a course.
+  const canMakeCourse = root || listing?.kind === 'group'
+
 
   // --- drag and drop: PDFs from the desktop import here; lectures reorder or move into folders ---
   const endDrag = () => { drag.current = null; setTarget(null) }
@@ -129,7 +165,7 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
   })
   const pageDrop = {
     onDragOver: (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes('Files')) return
+      if (fresh || !e.dataTransfer.types.includes('Files')) return // a new library starts with a course folder
       e.preventDefault()
       setOver(true)
     },
@@ -152,17 +188,12 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
   const here = listing?.name || t.library
   return (
     <>
-      <header className="bar"><Brand /><span className="spacer" /><span className="saved wide-only">{t.savedLocally}</span><LangSwitch /></header>
-      <main className={'home' + (over ? ' over' : '')} {...pageDrop}>
-        {root && (
-          <div>
-            <h1>{t.heroTitle}</h1>
-            <p className="lead">{t.heroLead}</p>
-          </div>
-        )}
+      <header className="bar"><Brand href={root ? undefined : href({ name: 'home', folder: parentOf(folder) })} extra={health && <AiBadge info={health} onChange={setHealth} />} /><span className="spacer" /><span className="saved wide-only">{t.savedLocally}</span><LangSwitch /></header>
+      <main className={'home' + (over ? ' over' : '') + (homeGrid ? ' wide' : '')} {...pageDrop}>
         {notice && <p className="warn">{notice}</p>}
         {health && <ProviderBar info={health} onChange={setHealth} />}
 
+        <div className={homeGrid ? 'home-cols' : 'home-one'}>
         <section className="card lib">
           <div className="lib-head">
             <nav className="crumbs" aria-label={t.library}>
@@ -181,13 +212,19 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
               ))}
             </nav>
             <span className="spacer" />
-            <button className="btn" onClick={newFolder}><Icon name="plus" />{t.newFolder}</button>
-            <button className="btn primary" disabled={!!busy} onClick={() => fileRef.current?.click()}>{t.importPdf}</button>
+            {canMakeCourse && !fresh && <button className="btn" onClick={newFolder}><Icon name="plus" />{t.newFolder}</button>}
+            {!fresh && <button className="btn primary" disabled={!!busy} onClick={() => examRef.current?.click()}>{t.importExam}</button>}
+            <input ref={examRef} type="file" multiple hidden
+              accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(e) => { importExams(e.target.files); e.target.value = '' }} />
+            {!fresh && <button className="btn primary" disabled={!!busy} onClick={() => fileRef.current?.click()}>{t.importPdf}</button>}
             <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden
               onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
           </div>
+          <div className="card-body">
 
-          {listing && listing.mixed && <p className="tip">{t.mixedNote}</p>}
+          {/* the library root is not a course: its lectures are just unfiled */}
+          {listing && listing.mixed && !root && <p className="tip">{t.mixedNote}</p>}
 
           {listing && listing.folders.length > 0 && (
             <ul className="rows">
@@ -212,9 +249,10 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
             </ul>
           )}
 
+          {(lectures.length > 0 || exams.length > 0) && <h2 className="materials">{listing?.folders.length ? t.unfiledH : t.materialsH}</h2>}
           {lectures.length > 0 && (
             <>
-              <h2 className="sub">{t.lecturesH}</h2>
+              <h3 className="sub">{t.lecturesH}</h3>
               <ol className="rows lectures">
                 {lectures.map((l, i) => (
                   <li key={l.path} {...lectureDrop(i)} onDragEnd={endDrag}
@@ -238,7 +276,7 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
                       { label: t.moveUp, disabled: i === 0, onClick: () => reorder(l.path, lectures[i - 1].path) },
                       { label: t.moveDown, disabled: i === lectures.length - 1,
                         onClick: () => reorder(l.path, lectures[i + 2]?.path ?? null) },
-                      { label: t.rename, onClick: () => rename(l.path, l.path.split('/').pop()!.replace(/\.gloss$/, '')) },
+                      { label: t.rename, onClick: () => rename(l.path, l.path.split('/').pop()!.replace(/\.(gls|gloss)$/, '')) },
                       { label: t.moveTo, onClick: () => setMoving({ path: l.path, name: l.title }) },
                     ]} />
                   </li>
@@ -247,49 +285,47 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
               {lectures.length > 1 && <p className="tip">{t.reorderHint}</p>}
             </>
           )}
+          {(lectures.length > 0 || exams.length > 0) && (
+            <Practice exams={exams} onDelete={(e) => setExams((xs) => xs.filter((x) => x.id !== e.id))}
+              onRenamed={(e) => setExams((xs) => xs.map((x) => (x.id === e.id ? e : x)))} />
+          )}
 
-          {listing && !listing.folders.length && !lectures.length && (
+          {fresh && (
+            <div className="start">
+              <p>{t.startHint}</p>
+              <button className="btn primary big" onClick={startCourse}><Icon name="plus" />{t.newFolder}</button>
+            </div>
+          )}
+          {listing && !fresh && !listing.folders.length && !lectures.length && !exams.length && (
             <div className={'drop' + (over ? ' over' : '')} role="button" tabIndex={0}
               onClick={() => fileRef.current?.click()}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}>
               {busy ?? (root ? t.dropHint : t.emptyFolder)}
             </div>
           )}
-          {(listing?.folders.length || lectures.length) ? (
+          {(listing?.folders.length || lectures.length || exams.length) ? (
             <p className={'drop-line' + (over ? ' over' : '')}>{busy ?? t.importInto(here)}</p>
           ) : null}
+          </div>
+          {root && (
+            <div className="lib-foot">
+              <button className="btn ghost" onClick={() => setOpening(true)}><Icon name="doc" />{t.openGlossFile}</button>
+            </div>
+          )}
         </section>
 
-        {listing && (listing.lectures.length > 0 || listing.has_study) && <ProfilePanel key={'p' + listing.path} listing={listing} />}
-        {listing && listing.kind !== 'empty' && <QuizPanel key={listing.path} listing={listing} />}
+        {homeGrid && listing && (
+          <div className="home-side">
+            {root ? <CatchUp /> : hasProfile && <ProfilePanel key={'p' + listing.path} listing={listing} />}
+            {root ? <QuizPanel key="home" listing={listing} home /> : hasQuiz && <QuizPanel key={listing.path} listing={listing} />}
+          </div>
+        )}
+        </div>
 
-        {root && recent.length > 0 && (
-          <section className="card">
-            <h2>{t.recent}</h2>
-            <ul className="recent">
-              {recent.map((r) => (
-                <li key={r.path}>
-                  <button disabled={!r.exists || !!busy} onClick={() => run(t.opening, () => api.open(r.path))}
-                    title={r.exists ? r.path : t.fileMissing}>
-                    <span>{r.title || t.untitled}</span>
-                    <span className="p">{r.path}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {root && (
-          <section className="card">
-            <h2>{t.openExisting}</h2>
-            <form className="inline" onSubmit={(e) => { e.preventDefault(); if (path.trim()) run(t.opening, () => api.open(path.trim())) }}>
-              <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/you/Gloss/lecture-07.gloss" aria-label={t.filePath} />
-              <button className="btn" disabled={!path.trim() || !!busy}>{t.open}</button>
-            </form>
-          </section>
-        )}
         {error && <p className="err" role="alert">{error}</p>}
       </main>
+      {opening && <OpenFileDialog folder={folder} onClose={() => setOpening(false)}
+        onOpened={(c) => { setOpening(false); onOpen(c) }} />}
       {moving && (
         <MoveDialog item={moving} onClose={() => setMoving(null)}
           onPick={(to) => { const p = moving.path; setMoving(null); move(p, to) }} />
@@ -300,6 +336,44 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
 
 const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', anthropic_api: 'Anthropic API',
   openai_api: 'OpenAI API' }
+const SHORT: Record<string, string> = { claude: 'Claude', codex: 'Codex', anthropic_api: 'Anthropic API',
+  openai_api: 'OpenAI API' }
+
+/** The AI in use, small, after the "Gloss" title. With both CLIs installed (and no config pin) it opens a
+ *  one-item menu to switch, so a stray click doesn't change the provider. */
+function AiBadge({ info, onChange }: { info: ProviderInfo; onChange: (p: ProviderInfo) => void }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close) }
+  }, [open])
+  const name = info.provider
+  if (!name || info.needs_choice) return null
+  const other = info.provider_source !== 'config' ? info.available.find((n) => n !== name) : undefined
+  const label = SHORT[name] ?? name
+  if (!other) return <span className="ai-badge" title={t.usingAi(LABEL[name] ?? name)}>{label}</span>
+  return (
+    <span className="menu ai-menu" ref={ref}>
+      <button className="ai-badge switchable" aria-expanded={open} title={t.usingAi(LABEL[name] ?? name)}
+        onClick={() => setOpen((o) => !o)}>{label}<Icon name="chev" /></button>
+      {open && (
+        <div className="menu-pop list" role="menu">
+          <button role="menuitem" className="btn ghost" onClick={async () => {
+            setOpen(false)
+            try { onChange(await api.setProvider(other)) } catch { /* the bar below shows provider problems */ }
+          }}>{t.switchAi(LABEL[other])}</button>
+        </div>
+      )}
+    </span>
+  )
+}
 
 /** Which AI answers (§6.2): pick one when both CLIs are installed, say so when none is, warn if not logged in. */
 function ProviderBar({ info, onChange }: { info: ProviderInfo; onChange: (p: ProviderInfo) => void }) {
@@ -332,19 +406,12 @@ function ProviderBar({ info, onChange }: { info: ProviderInfo; onChange: (p: Pro
     )
   }
   const name = info.provider ?? ''
-  const other = info.available.find((n) => n !== name)
   return (
     <>
       {info.logged_in === false && (
         <p className="warn">{name === 'codex' ? t.notLoggedInCodex : name.endsWith('_api') ? t.noApiKey(LABEL[name]) : t.notLoggedInClaude}</p>
       )}
-      <p className="ai-line row-meta">
-        {t.usingAi(LABEL[name] ?? name)}
-        {info.provider_source !== 'config' && other && (
-          <> · <button className="linkbtn" disabled={busy} onClick={() => pick(other)}>{t.switchAi(LABEL[other])}</button></>
-        )}
-        {error && <span className="err"> {error}</span>}
-      </p>
+      {error && <p className="err">{error}</p>}
     </>
   )
 }
@@ -353,39 +420,6 @@ function kindLabel(t: Messages, f: Listing['folders'][number]) {
   if (f.kind === 'course') return t.kindCourse(f.lectures)
   if (f.kind === 'group') return t.kindGroup(f.folders)
   return t.kindEmpty
-}
-
-type MenuItem = { label: string; onClick: () => void; disabled?: boolean }
-
-function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (e: Event) => {
-      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [open])
-  return (
-    <div className="menu row-menu" ref={ref}>
-      <button className="btn ghost icon-btn" aria-label={label} title={label} aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}><Icon name="more" /></button>
-      {open && (
-        <div className="menu-pop list" role="menu">
-          {items.map((it) => (
-            <button key={it.label} role="menuitem" className="btn ghost" disabled={it.disabled}
-              onClick={() => { setOpen(false); it.onClick() }}>{it.label}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MoveDialog({ item, onPick, onClose }: { item: { path: string; name: string }; onPick: (to: string) => void; onClose: () => void }) {
@@ -397,7 +431,7 @@ function MoveDialog({ item, onPick, onClose }: { item: { path: string; name: str
     document.addEventListener('keydown', esc)
     return () => document.removeEventListener('keydown', esc)
   }, [onClose])
-  const isFolder = !item.path.endsWith('.gloss')
+  const isFolder = !/\.(gls|gloss)$/.test(item.path)
   return (
     <div className="modal-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label={t.moveTitle(item.name)}>
@@ -424,3 +458,46 @@ function MoveDialog({ item, onPick, onClose }: { item: { path: string; name: str
   )
 }
 
+
+
+/** "Open a Gloss file" (§9.1): pick one (copied into the library: browsers can't open a file in place) or paste a path. */
+function OpenFileDialog({ folder, onClose, onOpened }: { folder: string; onClose: () => void; onOpened: (c: Course) => void }) {
+  const t = useT()
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const file = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [onClose])
+  const run = async (f: () => Promise<Course>) => {
+    setBusy(true)
+    setError(null)
+    try { onOpened(await f()) } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false) }
+  }
+  return (
+    <div className="modal-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-label={t.openGlossFile}
+        onSubmit={(e) => { e.preventDefault(); if (path.trim()) run(() => api.open(path.trim())) }}>
+        <h2>{t.openGlossFile}</h2>
+        <p className="tip">{t.openFileCopy}</p>
+        <input ref={file} type="file" accept=".gls,.gloss" hidden
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) run(() => api.uploadGloss(f, folder)) }} />
+        <button type="button" className="btn primary" disabled={busy} onClick={() => file.current?.click()}>
+          {busy ? <span className="spin" /> : <Icon name="doc" />}{t.chooseFile}
+        </button>
+        <label className="field">
+          <span className="lbl">{t.openFilePath}</span>
+          <span className="inline">
+            <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/you/Gloss/lecture-07.gls" aria-label={t.filePath} />
+            <button className="btn" disabled={!path.trim() || busy}>{t.open}</button>
+          </span>
+        </label>
+        {error && <p className="err">{error}</p>}
+        <div className="dialog-actions"><button type="button" className="btn" onClick={onClose}>{t.cancel}</button></div>
+      </form>
+    </div>
+  )
+}
