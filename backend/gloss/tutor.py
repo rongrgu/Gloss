@@ -187,7 +187,14 @@ class Tutor:
         self.weak_points: Callable[[Course, int], str] = lambda course, page: ""
         self.locale = locale  # interface language, for the few user-visible strings made here
         # Q&A may Grep/Read the whole course (§8, M6) — only with a provider that has tools.
+        self._want_retrieval = retrieval
         self.retrieval = retrieval and getattr(provider, "supports_tools", True)
+
+    def set_provider(self, provider: LLMProvider) -> None:
+        """Switch provider while running (the user picked claude or codex, §6.2). Jobs already running finish
+        with the old one; page sessions belong to their provider, so the next question simply rebuilds."""
+        self.provider = provider
+        self.retrieval = self._want_retrieval and getattr(provider, "supports_tools", True)
 
     # --- explanations (§5.4) ----------------------------------------------
 

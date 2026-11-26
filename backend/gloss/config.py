@@ -64,7 +64,7 @@ PURPOSES = ("outline", "explain", "qa", "digest", "quiz")  # outline = mind map 
 class Config:
     # claude | codex (your own CLI login and plan) | anthropic_api | openai_api (billed to the API key in
     # ANTHROPIC_API_KEY / OPENAI_API_KEY). "claude_cli" is the old name for "claude". Also `[llm] provider`.
-    provider: str = "claude"
+    provider: str | None = None  # None: detect the installed CLI (and ask when both are there), §6.2
     model: str = "sonnet"  # the default for every use; Claude aliases are ignored by codex / openai_api
     models: dict[str, str] = field(default_factory=dict)  # `[llm.models]`: outline / explain / qa / digest / quiz
     codex_auth: str = "login"  # codex: "login" (the CLI's saved login) | "api_key" (keep CODEX_API_KEY in the env)

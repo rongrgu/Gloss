@@ -51,7 +51,16 @@ export interface Tree {
 }
 
 /** App-wide preferences (DESIGN.md §9.3). */
-export interface Prefs {
+/** Which LLM answers (DESIGN.md §6.2). */
+export interface ProviderInfo {
+  provider: string | null // claude | codex | anthropic_api | openai_api; null: none installed
+  provider_source: 'config' | 'choice' | 'auto' | 'pending' | 'none'
+  available: string[] // installed CLIs
+  needs_choice: boolean // both CLIs installed and none picked yet
+  logged_in: boolean | null
+}
+
+export interface Prefs extends ProviderInfo {
   ui_language: 'zh' | 'en' | null // null: not chosen yet (English)
   language: string // Claude's explanation / answer language in effect
   language_pinned: boolean // set in config.toml; doesn't follow the interface
@@ -277,10 +286,11 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 const c = (cid: string) => `/api/courses/${encodeURIComponent(cid)}`
 
 export const api = {
-  health: () => req<{ provider: string; model: string; claude_found: boolean; logged_in: boolean | null }>('GET', '/api/health'),
+  health: () => req<ProviderInfo & { model: string; version: string }>('GET', '/api/health'),
   recent: () => req<RecentItem[]>('GET', '/api/recent'),
   prefs: () => req<Prefs>('GET', '/api/prefs'),
   setPrefs: (ui_language: 'zh' | 'en') => req<Prefs>('PUT', '/api/prefs', { ui_language }),
+  setProvider: (provider: string) => req<Prefs>('PUT', '/api/prefs', { provider }),
   importPdf: (file: File, folder = '') => {
     const fd = new FormData()
     fd.append('file', file)

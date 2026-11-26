@@ -100,14 +100,16 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 | `quiz_verify` | `true` | check every pre-quiz answer key against the slides with a second call |
 | `digest_model` | (unset) | model for lecture summaries and study-profile updates; unset uses `model` (newer form: `[llm.models] digest`) |
 | `use_profile` | `true` | mention relevant weak points from the study profile in new explanations and question sessions |
-| `[llm] provider` | `"claude"` | which LLM answers: `claude`, `codex`, `anthropic_api` or `openai_api` (see below). The older top-level `provider = "claude_cli"` still works |
+| `[llm] provider` | (detected) | which LLM answers: `claude`, `codex`, `anthropic_api` or `openai_api` (see below). Unset, Gloss uses the installed CLI, or asks on the home page when both are. The older top-level `provider = "claude_cli"` still works |
 | `[llm.models]` | (empty) | a model per use: `outline` (mind map, transcript alignment), `explain`, `qa`, `digest`, `quiz`; empty uses `model` |
 | `library` | `~/Gloss` | where imported courses are saved |
 | `claude_bin` / `codex_bin` | found on `PATH` | path to the `claude` / `codex` executable |
 
 ### Choosing the LLM: your CLI login, or an API key
 
-Gloss can talk to four backends. Set `provider` under `[llm]` in `config.toml`; `gloss doctor` checks the one you chose (`--live` sends a tiny test prompt).
+**You usually don't need to configure anything.** Gloss looks for Claude Code (`claude`) and Codex (`codex`) when it starts: if only one is installed it uses that one; if both are, the home page asks which to use (and lets you switch later); if neither is, the home page and `gloss doctor` tell you. `gloss doctor` shows which one is in use (`--live` sends a tiny test prompt).
+
+To always use a particular backend, including the API ones, set `provider` under `[llm]` in `config.toml`:
 
 | `provider` | what it uses | who pays |
 |---|---|---|

@@ -457,3 +457,10 @@ button,input,textarea{font:inherit;color:inherit}
 .history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13.5px;border-top:1px solid var(--line);padding-top:10px}
 .history li{display:flex;flex-direction:column}
 .history li.undone{text-decoration:line-through;opacity:.6}
+
+/* ---------- which AI (§6.2) ---------- */
+.pick-ai h2{margin:0 0 4px}
+.ai-options{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.btn.ai{flex:1 1 200px;flex-direction:column;align-items:flex-start;gap:2px;min-height:64px;padding:10px 14px;white-space:normal;text-align:left}
+.btn.ai:hover:not(:disabled){border-color:var(--accent)}
+.ai-line{margin:-12px 0 0}

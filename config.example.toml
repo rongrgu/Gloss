@@ -42,6 +42,9 @@ use_profile = true
 
 # --- Which LLM answers (DESIGN.md §6) -------------------------------------------------------
 [llm]
+# Leave `provider` unset and Gloss picks it for you: the installed CLI (claude or codex), or, if both
+# are installed, the one you choose on the home page (you can switch there any time).
+# Set it to always use one:
 # claude:        your logged-in Claude Code (`claude`), counted against your Claude plan.
 # codex:         your logged-in OpenAI Codex CLI (`codex`), counted against your ChatGPT / Codex plan.
 #                Not yet tested against a real Codex; see DESIGN.md §6.
@@ -52,7 +55,7 @@ use_profile = true
 # The API providers can't search the rest of the course or make pre-quizzes (no tools), and they
 # resend the slide's history with every question (prompt caching keeps the repeated part cheap).
 # API keys are read from the environment only: never put them in this file.
-provider = "claude"
+# provider = "claude"
 # codex only: "login" uses the CLI's own login (default); "api_key" lets codex bill CODEX_API_KEY.
 # codex_auth = "login"
 

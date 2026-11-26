@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tempfile
 import threading
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from . import schema
 from .config import Config, app_dir
-from .doctor import auth_status
+from .doctor import auth_status, codex_logged_in
 from .export import export_markdown
 from .folders import EPSILON, FolderError, Folders, key_between
 from .i18n import LANGUAGE_FOR, Prefs
@@ -32,7 +33,9 @@ from .digest import Digester, digest_dict
 from .profile import STATUSES as WP_STATUSES, ProfileError, ProfileStore, Profiler, on_mark, on_quiz_answer
 from .providers import LLMProvider
 from .providers.claude_cli import find_claude
-from .providers.factory import make_provider
+from .providers.factory import Choice, choose_provider, make_provider
+from .providers.adapters.codex import find_codex
+from . import __version__
 from .store import Course, Message, Thread
 from .transcript import decode, segment
 from .tutor import Tutor
@@ -163,7 +166,8 @@ class NoteBody(BaseModel):
 
 
 class PrefsBody(BaseModel):
-    ui_language: str
+    ui_language: str | None = None
+    provider: str | None = None  # claude | codex: when both are installed (§6.2)
 
 
 class MkdirBody(BaseModel):
@@ -260,10 +264,14 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     # Endpoints that touch `jobs` are `async def` so they run on the event loop
     # (JobManager is not thread-safe and starts asyncio tasks).
     config = config or Config.load()
-    if provider is None:
-        provider = make_provider(config)
-    jobs = JobManager(config.concurrency)
     prefs = Prefs(app_dir() / "prefs.json")
+    # Which LLM: config.toml if it says, else the installed CLI, or the user's pick when both are (§6.2).
+    choice = choose_provider(config, prefs.provider)
+    if provider is None:
+        provider = make_provider(config, choice.name)
+    else:  # tests pass their own provider
+        choice = Choice(provider.name, "config", choice.available)
+    jobs = JobManager(config.concurrency)
 
     def claude_language() -> str:
         # config.toml pins it; otherwise it follows the interface language (§9.3)
@@ -313,31 +321,68 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
 
     # --- app-level ---
 
-    auth_cache: dict[str, Any] = {"at": -1e9, "value": None}
+    auth_cache: dict[str, Any] = {}  # provider -> (checked at, logged in?)
+
+    def logged_in(name: str) -> bool | None:
+        """Is the active CLI logged in (cached 30 s)? None when unknown; API providers: whether the key is set."""
+        at, value = auth_cache.get(name, (-1e9, None))
+        if time.monotonic() - at < 30:
+            return value
+        if name == "claude":
+            exe = config.claude_bin or find_claude()
+            st = auth_status(exe) if exe else None
+            value = None if st is None else bool(st.get("loggedIn"))
+        elif name == "codex":
+            exe = config.codex_bin or find_codex()
+            value = codex_logged_in(exe) if exe else False
+        elif name in ("anthropic_api", "openai_api"):
+            value = bool(os.environ.get("ANTHROPIC_API_KEY" if name == "anthropic_api" else "OPENAI_API_KEY"))
+        else:
+            value = None
+        auth_cache[name] = (time.monotonic(), value)
+        return value
+
+    def provider_info() -> dict[str, Any]:
+        name = tutor.provider.name
+        return {"provider": None if name == "none" else name, "provider_source": choice.source,
+                "available": choice.available, "needs_choice": choice.needs_choice,
+                "logged_in": logged_in(name) if name != "none" else False}
 
     @app.get("/api/health")
     def health():
-        claude = config.claude_bin or find_claude()
-        if claude and time.monotonic() - auth_cache["at"] > 30:
-            st = auth_status(claude)
-            auth_cache.update(at=time.monotonic(), value=None if st is None else bool(st.get("loggedIn")))
-        return {"provider": provider.name, "model": config.model, "language": tutor.language,
-                "claude_found": bool(claude), "logged_in": auth_cache["value"] if claude else False}
+        info = provider_info()
+        return {**info, "model": config.model, "language": tutor.language, "version": __version__,
+                # older fields the home page used to read
+                "claude_found": "claude" in choice.available,
+                }
 
     def prefs_dict() -> dict[str, Any]:
-        return {"ui_language": prefs.ui_language, "language": tutor.language, "language_pinned": bool(config.language)}
+        return {"ui_language": prefs.ui_language, "language": tutor.language, "language_pinned": bool(config.language),
+                **provider_info()}
 
     @app.get("/api/prefs")
     def get_prefs():
         return prefs_dict()
 
     @app.put("/api/prefs")
-    def put_prefs(body: PrefsBody):
-        try:
-            prefs.set_ui_language(body.ui_language)
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
-        tutor.language, tutor.locale = claude_language(), prefs.locale
+    async def put_prefs(body: PrefsBody):
+        nonlocal choice
+        if body.ui_language is not None:
+            try:
+                prefs.set_ui_language(body.ui_language)
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
+            tutor.language, tutor.locale = claude_language(), prefs.locale
+        if body.provider is not None:
+            if choice.source == "config":
+                raise HTTPException(409, "the provider is set in config.toml")
+            choice = choose_provider(config)  # re-detect: something may have been installed since startup
+            if body.provider not in choice.available:
+                raise HTTPException(422, f"{body.provider} is not installed (found: {', '.join(choice.available) or 'none'})")
+            prefs.set_provider(body.provider)
+            choice = choose_provider(config, body.provider)
+            if tutor.provider.name != body.provider:
+                tutor.set_provider(make_provider(config, body.provider))
         return prefs_dict()
 
     @app.get("/api/recent")

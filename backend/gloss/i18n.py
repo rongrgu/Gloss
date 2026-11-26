@@ -74,8 +74,12 @@ class Prefs:
             data = json.loads(self.path.read_text())
         except (OSError, ValueError):
             data = {}
-        lang = data.get("ui_language") if isinstance(data, dict) else None
+        data = data if isinstance(data, dict) else {}
+        lang = data.get("ui_language")
         self.ui_language: str | None = lang if lang in LOCALES else None  # None: not chosen yet
+        # The CLI the user picked when both claude and codex are installed (DESIGN.md §6.2); None: not chosen.
+        prov = data.get("provider")
+        self.provider: str | None = prov if isinstance(prov, str) and prov else None
 
     @property
     def locale(self) -> str:
@@ -85,7 +89,15 @@ class Prefs:
         if lang not in LOCALES:
             raise ValueError(f"ui_language must be one of {LOCALES}")
         self.ui_language = lang
+        self._save()
+
+    def set_provider(self, name: str | None) -> None:
+        self.provider = name
+        self._save()
+
+    def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"ui_language": lang}))
+        data = {k: v for k, v in {"ui_language": self.ui_language, "provider": self.provider}.items() if v}
+        tmp.write_text(json.dumps(data))
         os.replace(tmp, self.path)

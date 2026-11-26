@@ -1,6 +1,7 @@
 """`gloss` command.
 
     gloss                 start the app and open it in the browser
+    gloss --version       print the installed version
     gloss doctor [--live] check that Gloss can run here
     gloss export FILE     write a course as Markdown
     gloss mcp-serve       (internal) course tools for claude, over stdio (DESIGN.md §13.4)
@@ -56,6 +57,19 @@ def serve(args: argparse.Namespace) -> int:
     if problems:
         print("  (run `gloss doctor` for details; starting anyway)\n", file=sys.stderr)
 
+    from .i18n import Prefs
+    from .providers.factory import LABELS, choose_provider
+    from .config import app_dir
+
+    ch = choose_provider(cfg, Prefs(app_dir() / "prefs.json").provider)
+    if ch.source == "none":
+        pass  # the startup checks above already said so
+    elif ch.source == "pending":
+        print("  Both Claude Code and Codex are installed: choose one on the home page "
+              "(using Claude Code until you do).", flush=True)
+    else:
+        why = {"config": "set in config.toml", "choice": "your choice", "auto": "the only one installed"}[ch.source]
+        print(f"  Using {LABELS.get(ch.name, ch.name)} ({why}).", flush=True)
     port = args.port or free_port(DEFAULT_PORT)
     url = f"http://127.0.0.1:{port}/"
     print(f"Gloss is running at {url}  (Ctrl+C to stop)", flush=True)
@@ -80,7 +94,10 @@ def export(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from . import __version__
+
     ap = argparse.ArgumentParser(prog="gloss", description="Ask questions right on your lecture slides.")
+    ap.add_argument("--version", action="version", version=f"gloss {__version__}")
     ap.add_argument("--port", type=int, help=f"port to listen on (default: first free from {DEFAULT_PORT})")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
     sub = ap.add_subparsers(dest="cmd")

@@ -230,10 +230,11 @@ def test_export_endpoint(env):
 def test_prefs_switch_interface_and_claude_language(env):
     client, provider, tmp_path = env
     # English by default
-    assert client.get("/api/prefs").json() == {"ui_language": None, "language": "English", "language_pinned": False}
+    lang = lambda d: {k: d[k] for k in ("ui_language", "language", "language_pinned")}  # noqa: E731
+    assert lang(client.get("/api/prefs").json()) == {"ui_language": None, "language": "English", "language_pinned": False}
     assert client.put("/api/prefs", json={"ui_language": "fr"}).status_code == 422
     r = client.put("/api/prefs", json={"ui_language": "zh"}).json()
-    assert r == {"ui_language": "zh", "language": "中文", "language_pinned": False}
+    assert lang(r) == {"ui_language": "zh", "language": "中文", "language_pinned": False}
     assert json.loads((tmp_path / "home" / "prefs.json").read_text()) == {"ui_language": "zh"}
     client.put("/api/prefs", json={"ui_language": "en"})
 
@@ -253,17 +254,19 @@ def test_pinned_language_ignores_interface(tmp_path, monkeypatch):
     (tmp_path / "home" / "prefs.json").write_text('{"ui_language": "en"}')
     cfg = Config(workspace=REPO_ROOT / "claude_workspace", library=tmp_path / "lib", model="fake", language="中文")
     with TestClient(create_app(cfg, FakeProvider())) as client:
-        assert client.get("/api/prefs").json() == {"ui_language": "en", "language": "中文", "language_pinned": True}
+        p = client.get("/api/prefs").json()
+        assert (p["ui_language"], p["language"], p["language_pinned"]) == ("en", "中文", True)
         assert client.put("/api/prefs", json={"ui_language": "zh"}).json()["language"] == "中文"
 
 
 def test_health_reports_login(env, monkeypatch):
-    client, _, _ = env
+    client, provider, _ = env
     import gloss.server as server
     monkeypatch.setattr(server, "find_claude", lambda: "/bin/claude")
     monkeypatch.setattr(server, "auth_status", lambda _: {"loggedIn": False})
+    provider.name = "claude"  # the login check is per provider
     h = client.get("/api/health").json()
-    assert h["claude_found"] is True and h["logged_in"] is False
+    assert h["provider"] == "claude" and h["logged_in"] is False and h["version"]
 
 
 def test_transcript_upload_align_delete(env):

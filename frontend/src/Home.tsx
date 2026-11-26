@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Course, type Lecture, type Listing, type RecentItem } from './api'
+import { api, type Course, type Lecture, type Listing, type ProviderInfo, type RecentItem } from './api'
 import { Brand, Icon } from './Icon'
 import { LangSwitch, useT, type Messages } from './i18n'
 import { QuizPanel } from './QuizPanel'
@@ -21,7 +21,7 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
   const root = folder === ''
   const [listing, setListing] = useState<Listing | null>(null)
   const [recent, setRecent] = useState<RecentItem[]>([])
-  const [health, setHealth] = useState<{ claude_found: boolean; logged_in: boolean | null; model: string } | null>(null)
+  const [health, setHealth] = useState<ProviderInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [over, setOver] = useState(false)
@@ -161,12 +161,7 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
           </div>
         )}
         {notice && <p className="warn">{notice}</p>}
-        {health && !health.claude_found && (
-          <p className="warn">{t.noClaude[0]}<code>claude</code>{t.noClaude[1]}</p>
-        )}
-        {health?.claude_found && health.logged_in === false && (
-          <p className="warn">{t.notLoggedIn[0]}<code>claude</code>{t.notLoggedIn[1]}</p>
-        )}
+        {health && <ProviderBar info={health} onChange={setHealth} />}
 
         <section className="card lib">
           <div className="lib-head">
@@ -299,6 +294,57 @@ export default function Home({ folder, onOpen, notice }: { folder: string; onOpe
         <MoveDialog item={moving} onClose={() => setMoving(null)}
           onPick={(to) => { const p = moving.path; setMoving(null); move(p, to) }} />
       )}
+    </>
+  )
+}
+
+const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', anthropic_api: 'Anthropic API',
+  openai_api: 'OpenAI API' }
+
+/** Which AI answers (§6.2): pick one when both CLIs are installed, say so when none is, warn if not logged in. */
+function ProviderBar({ info, onChange }: { info: ProviderInfo; onChange: (p: ProviderInfo) => void }) {
+  const t = useT()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pick = async (name: string) => {
+    setBusy(true)
+    setError(null)
+    try { onChange(await api.setProvider(name)) } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    setBusy(false)
+  }
+  if (info.provider_source === 'none') {
+    return <p className="warn" role="alert">{t.noCli}</p>
+  }
+  if (info.needs_choice) {
+    return (
+      <section className="card pick-ai">
+        <h2>{t.chooseAi}</h2>
+        <p className="tip">{t.chooseAiLead}</p>
+        <div className="ai-options">
+          {info.available.map((name) => (
+            <button key={name} className="btn ai" disabled={busy} onClick={() => pick(name)}>
+              <b>{LABEL[name]}</b><span className="row-meta">{t.aiPlan[name]}</span>
+            </button>
+          ))}
+        </div>
+        {error && <p className="err">{error}</p>}
+      </section>
+    )
+  }
+  const name = info.provider ?? ''
+  const other = info.available.find((n) => n !== name)
+  return (
+    <>
+      {info.logged_in === false && (
+        <p className="warn">{name === 'codex' ? t.notLoggedInCodex : name.endsWith('_api') ? t.noApiKey(LABEL[name]) : t.notLoggedInClaude}</p>
+      )}
+      <p className="ai-line row-meta">
+        {t.usingAi(LABEL[name] ?? name)}
+        {info.provider_source !== 'config' && other && (
+          <> · <button className="linkbtn" disabled={busy} onClick={() => pick(other)}>{t.switchAi(LABEL[other])}</button></>
+        )}
+        {error && <span className="err"> {error}</span>}
+      </p>
     </>
   )
 }

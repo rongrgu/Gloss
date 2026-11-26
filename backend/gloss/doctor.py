@@ -35,6 +35,14 @@ def auth_status(claude: str) -> dict | None:
         return None
 
 
+def codex_logged_in(codex: str) -> bool | None:
+    """`codex login status` exits 0 when logged in (docs; not checked against a real codex). None if it can't run."""
+    try:
+        return subprocess.run([codex, "login", "status"], capture_output=True, text=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def live_test(claude: str, cfg: Config) -> Check:
     """Send a tiny prompt the way Gloss does (uses a little quota)."""
     args = [claude, "-p", "--restricted", "--tools", "Read", "--allowedTools", "Read", "--permission-prompts", "none",
@@ -171,6 +179,24 @@ def run_checks(cfg: Config | None = None, live: bool = False) -> list[Check]:
                             "but other tools you run will bill that API key."))
 
     name = provider_name(cfg)
+    if name is None:  # not set in config.toml: detect the installed CLI (§6.2)
+        from .config import app_dir
+        from .i18n import Prefs
+        from .providers.factory import LABELS, choose_provider
+        ch = choose_provider(cfg, Prefs(app_dir() / "prefs.json").provider)
+        name = ch.name
+        if ch.source == "none":
+            checks.append(Check("fail", "AI", "neither Claude Code (`claude`) nor Codex (`codex`) is installed. "
+                                              "Install one (https://claude.com/claude-code or the OpenAI Codex CLI) "
+                                              "and log in, or set a provider in config.toml."))
+        elif ch.source == "pending":
+            checks.append(Check("ok", "AI", "both Claude Code and Codex are installed: choose one on Gloss's home page "
+                                            "(Claude Code until you do)"))
+        else:
+            why = {"choice": "your choice in the app", "auto": "the only one installed"}[ch.source]
+            checks.append(Check("ok", "AI", f"{LABELS[name]} ({why})"))
+        if name is None:
+            name = "none"
     if name != "claude":
         checks = [c for c in checks if c.name != "ANTHROPIC_API_KEY"]  # only matters for the claude CLI
     if name == "anthropic_api":
@@ -180,7 +206,7 @@ def run_checks(cfg: Config | None = None, live: bool = False) -> list[Check]:
         checks += [provider_live_test(cfg)] if live else []
     elif name == "codex":
         checks += codex_checks(cfg, live)
-    else:
+    elif name == "claude":
         checks += cli_checks(cfg, live)
 
     missing = [p for p in PROMPTS if not (cfg.workspace / "prompts" / f"{p}.md").exists()]
