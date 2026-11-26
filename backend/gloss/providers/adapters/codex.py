@@ -1,8 +1,8 @@
 """`codex exec` adapter (OpenAI Codex CLI). DESIGN.md §6.
 
-NOT YET RUN AGAINST A REAL CODEX: Codex was not installed on the development machine. Flags and event
-shapes follow codex 0.172.0's source (codex-rs/exec/src/cli.rs, exec_events.rs) and official docs; the
-open questions are listed in DESIGN.md §6 and checked by tests/test_contract_cli.py when it is enabled.
+Flags and event shapes follow codex 0.172.0's source (codex-rs/exec/src/cli.rs, exec_events.rs) and official
+docs. Verified with a real Codex CLI by the maintainer (2026-11-26); tests/test_contract_cli.py
+(GLOSS_CONTRACT=codex) checks the open points in DESIGN.md §6 against an installed codex.
 
 - Read-only always: `--sandbox read-only`. Gloss never lets a model write files (§2); this is never widened.
 - Prompt on stdin (`-`); JSONL on stdout (`--json`); whole messages only (no token deltas).
