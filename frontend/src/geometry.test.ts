@@ -43,8 +43,11 @@ describe('layout', () => {
       ...DEFAULT_LAYOUT, mode: 'side', showNotes: false, stack: { a: 0.85, b: 0.58 },
     })
   })
+  it('defaults to side by side', () => {
+    expect(DEFAULT_LAYOUT.mode).toBe('side')
+  })
   it('stack mode: slide on top, explain|notes below', () => {
-    const g = gridFor(DEFAULT_LAYOUT)
+    const g = gridFor({ ...DEFAULT_LAYOUT, mode: 'stack' })
     expect(g.ws.gridTemplateRows).toBe('minmax(0,0.6fr) 12px minmax(0,0.4fr)')
     expect(g.group.gridTemplateColumns).toContain('0.58fr')
     expect([g.splitAAxis, g.splitBAxis]).toEqual(['h', 'v'])

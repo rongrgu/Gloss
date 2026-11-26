@@ -57,7 +57,7 @@ export interface Layout {
 }
 
 export const DEFAULT_LAYOUT: Layout = {
-  mode: 'stack',
+  mode: 'side', // slide beside explanation + notes (2026-11-26; was 'stack')
   showExplain: true,
   showNotes: true,
   stack: { a: 0.6, b: 0.58 },

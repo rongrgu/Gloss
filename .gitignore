@@ -1,10 +1,16 @@
 # --- Gloss: user data and course material (never commit) ---
+*.gls
+*.gls-wal
+*.gls-shm
 *.gloss
 *.gloss-wal
 *.gloss-shm
 claude_workspace/courses/
 claude_workspace/scopes/
 *.glossq
+*.glossc
+*.glossc-wal
+*.glossc-shm
 *.glossq-wal
 *.glossq-shm
 config.toml

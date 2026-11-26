@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import tempfile
 import threading
 import time
@@ -23,12 +24,16 @@ from pydantic import BaseModel, Field
 from . import schema
 from .config import Config, app_dir
 from .doctor import auth_status, codex_logged_in
+from .catchup import catch_up
+from .cheatsheet import SheetMaker, SheetStore, all_sheets
+from .docx_export import to_docx
+from .exams import ExamError, Exams, all_exams, clean_title
 from .export import export_markdown
-from .folders import EPSILON, FolderError, Folders, key_between
+from .folders import EPSILON, LECTURE_SUFFIX, LECTURE_SUFFIXES, FolderError, Folders, key_between
 from .i18n import LANGUAGE_FOR, Prefs
 from .ingest import IngestError, create_course
 from .jobs import JobManager
-from .quiz import TYPES, QuizMaker, QuizStore
+from .quiz import TYPES, QuizMaker, QuizStore, all_quizzes
 from .digest import Digester, digest_dict
 from .profile import STATUSES as WP_STATUSES, ProfileError, ProfileStore, Profiler, on_mark, on_quiz_answer
 from .providers import LLMProvider
@@ -93,9 +98,11 @@ class Library:
         stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", stem).strip(" .") or "course"
         d = folder or self.dir
         d.mkdir(parents=True, exist_ok=True)
-        p, i = d / f"{stem}.gloss", 2
-        while p.exists():
-            p, i = d / f"{stem}-{i}.gloss", i + 1
+        def taken(p: Path) -> bool:  # an old .gloss with the same name counts too
+            return any(p.with_suffix(s).exists() for s in LECTURE_SUFFIXES)
+        p, i = d / f"{stem}{LECTURE_SUFFIX}", 2
+        while taken(p):
+            p, i = d / f"{stem}-{i}{LECTURE_SUFFIX}", i + 1
         return p
 
     def open_under(self, path: Path) -> list[Course]:
@@ -191,6 +198,36 @@ class QuizBody(BaseModel):
     types: list[str] = Field(default_factory=lambda: list(TYPES))
     focus: str = "weak"
     lectures: list[str] | None = None  # library-relative paths (or course ids); None = every lecture under the folder
+    mode: str = "new"  # new | replicate (§13.8)
+    exam: str | None = None  # the past exam to replicate
+    instructions: str = ""  # the student's own requirements, take precedence over count / types
+
+
+class SheetBody(BaseModel):
+    folder: str = ""
+    lectures: list[str] | None = None  # library-relative paths or course ids; None = every lecture
+    exams: list[str] = Field(default_factory=list)  # past exam ids
+    pages: int = 1  # 0 = no limit
+    instructions: str = ""
+
+
+class SheetEditBody(BaseModel):
+    content: str = Field(max_length=200_000)
+    base: int | None = None  # the version the editor started from
+
+
+class SheetReviseBody(BaseModel):
+    request: str
+    selection: str = ""
+
+
+class TitleBody(BaseModel):
+    """A new display name for a past exam, quiz or cheatsheet (not a file or folder: that is RenameBody)."""
+    title: str
+
+
+class RestoreBody(BaseModel):
+    version: int
 
 
 class AttemptBody(BaseModel):
@@ -284,6 +321,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
     folders = Folders(config.library)
     quizzes = QuizMaker(tutor, config.library, model=config.model_for("quiz"), verify=config.quiz_verify)
     profiler = Profiler(tutor, config.library, model=config.model_for("digest"))
+    sheets = SheetMaker(tutor, config.library, model=config.model_for("cheatsheet"))
     digester = Digester(tutor, config.library, model=config.model_for("digest"), profiler=profiler)
     if config.use_profile:
         tutor.weak_points = profiler.relevant
@@ -391,6 +429,10 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
 
     # --- library folders (§13.2) ---
 
+    @app.exception_handler(ExamError)
+    async def exam_error(request: Request, e: ExamError):
+        return JSONResponse({"detail": str(e)}, status_code=e.status)
+
     @app.exception_handler(FolderError)
     async def folder_error(request: Request, e: FolderError):
         return JSONResponse({"detail": str(e)}, status_code=e.status)
@@ -416,7 +458,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         """Close open lectures at or under `p` before moving them; refuse while Claude is working on one."""
         open_now = library.open_under(p)
         if any(jobs.active(f"{c.id}:") for c in open_now):
-            raise FolderError("Claude is still working on this lecture; try again when it finishes", 409)
+            raise FolderError("Gloss is still working on this lecture; try again when it finishes", 409)
         for c in open_now:
             library.close(c.id)
 
@@ -463,12 +505,144 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
             write_sort_key(dst, (max(last) if last else 0) + 1)
         return {"path": folders.rel(dst)}
 
-    # --- pre-quiz (§13.5) ---
+    # --- catch-up on the library home (§17) ---
+
+    @app.get("/api/library/catchup")
+    def catchup():
+        return catch_up(folders.root, library.recent())
+
+    # --- past exams (§13.8) ---
+
+    @app.get("/api/library/exams")
+    def list_exams(folder: str = ""):
+        return {"exams": [{**m, "folder": folders.rel(d)} for d, m in all_exams(folders.folder(folder))]}
+
+    @app.post("/api/library/exams")
+    async def add_exam(file: UploadFile = File(...), folder: str = Form(""), title: str | None = Form(None)):
+        d = folders.folder(folder)
+        meta = Exams(d).add(file.filename or "exam.pdf", await file.read(), title)
+        return {**meta, "folder": folders.rel(d)}
+
+    @app.get("/api/library/exams/{eid}/file")
+    def exam_file(eid: str, folder: str = ""):
+        store = Exams(folders.folder(folder))
+        meta = store.get(eid)
+        path, media = store.source(eid)
+        how = "inline" if meta.get("kind", "pdf") == "pdf" else "attachment"  # browsers can't show .docx
+        return Response(path.read_bytes(), media_type=media,
+                        headers={"Content-Disposition": f"{how}; filename*=UTF-8''{quote(meta['filename'])}"})
+
+    @app.patch("/api/library/exams/{eid}")
+    def rename_exam(eid: str, body: TitleBody, folder: str = ""):
+        d = folders.folder(folder)
+        return {**Exams(d).rename(eid, body.title), "folder": folders.rel(d)}
+
+    @app.delete("/api/library/exams/{eid}")
+    def delete_exam(eid: str, folder: str = ""):
+        Exams(folders.folder(folder)).delete(eid)
+        return {"ok": True}
+
+    # --- cheatsheets (§16) ---
+
+    def sheet_store(folder: str, sid: str) -> SheetStore:
+        store = SheetStore(folders.folder(folder))
+        if store.get(sid) is None:
+            raise HTTPException(404, "no such cheatsheet")
+        return store
+
+    @app.get("/api/library/cheatsheets")
+    async def list_sheets(folder: str = "", deep: bool = False):
+        """`deep`: also the folders below (a quiz on a group folder offers its courses' cheatsheets, §16.9)."""
+        d = folders.folder(folder)
+        job = sheets.active(folder)
+        listed = all_sheets(d) if deep else [(d, s) for s in SheetStore(d).list()]
+        return {"sheets": [{**s, "folder": folders.rel(f)} for f, s in listed], "job": job.to_dict() if job else None}
+
+    @app.post("/api/library/cheatsheets")
+    async def start_sheet(body: SheetBody):
+        try:
+            job = sheets.start(body.folder, body.lectures, body.exams, body.pages, body.instructions)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from e
+        return {"job": job.to_dict()}
+
+    @app.get("/api/library/cheatsheets/{sid}")
+    def get_sheet(sid: str, folder: str = ""):
+        s = sheet_store(folder, sid).get(sid)
+        job = sheets.active(folder)
+        return {**s, "job": job.to_dict() if job and job.meta.get("sheet") == sid else None}
+
+    @app.put("/api/library/cheatsheets/{sid}")
+    def edit_sheet(sid: str, body: SheetEditBody, folder: str = ""):
+        store = sheet_store(folder, sid)
+        if not body.content.strip():  # never a real edit: deleting a sheet is its own action
+            raise HTTPException(422, "a cheatsheet can't be empty")
+        vid = store.save(sid, body.content, "edit", base=body.base)
+        return {"version": vid, "title": store.get(sid)["title"]}
+
+    @app.post("/api/library/cheatsheets/{sid}/revise")
+    async def revise_sheet(sid: str, body: SheetReviseBody, folder: str = ""):
+        sheet_store(folder, sid)
+        try:
+            job = sheets.revise(folder, sid, body.request, body.selection)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(409, str(e)) from e
+        return {"job": job.to_dict()}
+
+    @app.post("/api/library/cheatsheets/{sid}/restore")
+    def restore_sheet(sid: str, body: RestoreBody, folder: str = ""):
+        store = sheet_store(folder, sid)
+        try:
+            store.restore(sid, body.version)
+        except KeyError as e:
+            raise HTTPException(404, "no such version") from e
+        return {**store.get(sid), "job": None}
+
+    @app.get("/api/library/cheatsheets/{sid}/versions/{vid}")
+    def sheet_version(sid: str, vid: int, folder: str = ""):
+        try:
+            return {"content": sheet_store(folder, sid).version(sid, vid)}
+        except KeyError as e:
+            raise HTTPException(404, "no such version") from e
+
+    @app.get("/api/library/cheatsheets/{sid}/export.md")
+    def export_sheet(sid: str, folder: str = ""):
+        s = sheet_store(folder, sid).get(sid)
+        name = re.sub(r'[\\/:*?"<>|]', "_", s["title"] or "cheatsheet") + ".md"
+        return Response(s["content"], media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+    @app.get("/api/library/cheatsheets/{sid}/export.docx")
+    def export_sheet_docx(sid: str, folder: str = ""):
+        s = sheet_store(folder, sid).get(sid)
+        data, equations = to_docx(s["content"])
+        name = re.sub(r'[\\/:*?"<>|]', "_", s["title"] or "cheatsheet") + ".docx"
+        return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                                 "X-Gloss-Equations": "word" if equations else "text"})
+
+    @app.patch("/api/library/cheatsheets/{sid}")
+    def rename_sheet(sid: str, body: TitleBody, folder: str = ""):
+        store = sheet_store(folder, sid)
+        store.rename(sid, clean_title(body.title))
+        return {**store.get(sid), "job": None}
+
+    @app.delete("/api/library/cheatsheets/{sid}")
+    def delete_sheet(sid: str, folder: str = ""):
+        sheet_store(folder, sid).delete(sid)
+        return {"ok": True}
+
+    # --- quizzes (§13.5) ---
 
     @app.post("/api/library/quizzes")
     async def start_quiz(body: QuizBody):
         try:
-            job = quizzes.start(body.folder, body.count, tuple(body.types), body.focus, body.lectures)
+            job = quizzes.start(body.folder, body.count, tuple(body.types), body.focus, body.lectures,
+                                body.mode, body.exam, body.instructions)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except RuntimeError as e:
@@ -476,9 +650,12 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         return {"job": job.to_dict()}
 
     @app.get("/api/library/quizzes")
-    async def list_quizzes(folder: str = ""):
+    async def list_quizzes(folder: str = "", deep: bool = False):
+        """`deep`: also the folders below, each quiz with its `folder` (the library home lists them all, §17)."""
+        d = folders.folder(folder)
         job = quizzes.active(folder)
-        return {"quizzes": QuizStore(folders.folder(folder)).list(), "job": job.to_dict() if job else None}
+        listed = all_quizzes(d) if deep else [(d, q) for q in QuizStore(d).list()]
+        return {"quizzes": [{**q, "folder": folders.rel(f)} for f, q in listed], "job": job.to_dict() if job else None}
 
     @app.get("/api/library/quizzes/{qid}")
     def get_quiz(qid: str, folder: str = ""):
@@ -510,6 +687,13 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
             on_quiz_answer(d, {"correct": body.correct, "question_id": body.question_id, "topic": question.get("topic", ""),
                                "stem": question.get("stem", ""), "sources": srcs})
         return attempt
+
+    @app.patch("/api/library/quizzes/{qid}")
+    def rename_quiz(qid: str, body: TitleBody, folder: str = ""):
+        title = clean_title(body.title)
+        if not QuizStore(folders.folder(folder)).rename(qid, title):
+            raise HTTPException(404, "no such quiz")
+        return {"id": qid, "title": title}
 
     @app.delete("/api/library/quizzes/{qid}")
     def delete_quiz(qid: str, folder: str = ""):
@@ -615,6 +799,28 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
             except IngestError as e:
                 raise HTTPException(422, str(e)) from e
         return summary(opened(library.add(course)))
+
+    @app.post("/api/courses/upload")
+    async def upload_gloss(file: UploadFile = File(...), folder: str = Form("")):
+        """A Gloss file from elsewhere (e.g. a classmate's) is copied into the library and opened (§9.1).
+        The copy gets its own course id, so it never collides with the original if both end up here."""
+        name = Path(file.filename or "lecture.gls")
+        if name.suffix not in LECTURE_SUFFIXES:
+            raise HTTPException(422, "choose a Gloss file (.gls or .gloss)")
+        out = library.new_path(name.stem, folders.folder(folder))
+        out.write_bytes(await file.read())
+        try:
+            conn = sqlite3.connect(out)
+            try:
+                conn.execute("DELETE FROM meta WHERE key = 'course_id'")
+                conn.commit()
+            finally:
+                conn.close()
+            return summary(opened(library.open(out)))
+        except (sqlite3.Error, schema.NotAGlossFile, schema.FileTooNew) as e:
+            for p in (out, out.with_name(out.name + "-wal"), out.with_name(out.name + "-shm")):
+                p.unlink(missing_ok=True)
+            raise HTTPException(422, f"not a Gloss file: {e}") from e
 
     @app.post("/api/courses/open")
     def open_course(body: OpenBody):

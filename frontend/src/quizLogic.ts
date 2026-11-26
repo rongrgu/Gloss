@@ -1,4 +1,4 @@
-// Pure helpers for the pre-quiz screens (DESIGN.md §13.6). Unit-tested in quizLogic.test.ts.
+// Pure helpers for the quiz screens (DESIGN.md §13.6). Unit-tested in quizLogic.test.ts.
 import type { Quiz, QuizQuestion } from './api'
 import type { Messages } from './i18n'
 
@@ -61,6 +61,8 @@ export function describeQuizTool(target: string, t: Messages): string {
     case 'outline': return t.toolOutline(a)
     case 'list_lectures': return t.toolLectures
     case 'study_profile': return t.toolProfile
+    case 'exam': return t.toolExam(a, b)
+    case 'list_past_exams': return t.toolExams
     default: return ''
   }
 }

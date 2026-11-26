@@ -285,7 +285,7 @@ class Digester:
                 job.emit({"type": "reset"})
                 feedback = "## 上一次的结果有问题，请修正后重新输出\n\n" + "\n".join(f"- {p}" for p in problems)
             if problems:
-                raise ValueError("Claude's summary was malformed twice; try again")
+                raise ValueError("The summary was malformed twice; try again")
             data = clean(done.data, hs, course.slide_count(), known_ids)
             d = course.add_digest(data, render(data, course, self.tutor.locale), watermark, done.model)
             course.set_lecture_status("done")

@@ -134,7 +134,7 @@ def test_api_group_scope_and_validation(app):
     events = sse(client, r.json()["job"]["id"])
     assert events[-1]["type"] == "done", events  # quiz_verify on: the verify call has no structured data left…
     quiz = client.get(f"/api/library/quizzes/{events[-1]['quiz_id']}", params={"folder": "CMU"}).json()
-    assert quiz["title"] == "Pre-quiz" and quiz["questions"][0]["sources"][0]["course"] == "CMU/Stats"
+    assert quiz["title"] == "Quiz" and quiz["questions"][0]["sources"][0]["course"] == "CMU/Stats"
     assert any(e.get("phase") == "verify_failed" for e in events)  # …so the check fails and the quiz is kept
     assert "主要考学生还没问过" in provider.calls[0].prompt
 

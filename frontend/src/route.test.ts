@@ -22,3 +22,12 @@ describe('folder routes', () => {
     expect(parseHash('#/c/abc')).toEqual({ name: 'overview', cid: 'abc' })
   })
 })
+
+describe('cheatsheet route', () => {
+  it('round-trips folder and id', () => {
+    const r = { name: 'sheet' as const, folder: 'Fall 2026/ML', sid: 'ab12' }
+    expect(href(r)).toBe('#/s/ab12/Fall%202026/ML')
+    expect(parseHash(href(r))).toEqual(r)
+    expect(parseHash('#/s/ab12')).toEqual({ name: 'sheet', folder: '', sid: 'ab12' })
+  })
+})

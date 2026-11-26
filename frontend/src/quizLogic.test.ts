@@ -28,11 +28,19 @@ describe('quiz logic', () => {
   })
   it('describes generation progress in both languages', () => {
     const ev = [{ type: 'phase', phase: 'generate', attempt: 1 }, { type: 'tool', target: 'slide:L2:7' }]
-    expect(quizProgress(ev, MESSAGES.en)).toBe('Claude is writing the questions… Reading L2 slide 7')
-    expect(quizProgress(ev, MESSAGES.zh)).toBe('Claude 正在出题… 正在看 L2 第 7 页')
+    expect(quizProgress(ev, MESSAGES.en)).toBe('Gloss is writing the questions… Reading L2 slide 7')
+    expect(quizProgress(ev, MESSAGES.zh)).toBe('Gloss 正在出题… 正在看 L2 第 7 页')
     expect(quizProgress([...ev, { type: 'phase', phase: 'verify' }], MESSAGES.en)).toBe('Checking each answer against the slides…')
     expect(quizProgress([{ type: 'phase', phase: 'generate', attempt: 2 }], MESSAGES.en)).toMatch(/rewriting/)
     expect(describeQuizTool('search:a:b', MESSAGES.en)).toBe('search results for “a:b”')
     expect(describeQuizTool('unknown', MESSAGES.en)).toBe('')
+  })
+})
+
+describe('past exam progress', () => {
+  it('names the exam and page', () => {
+    expect(describeQuizTool('exam:E1:2', MESSAGES.en)).toBe('past exam E1, page 2')
+    expect(describeQuizTool('exam:E1:', MESSAGES.zh)).toBe(' 往年试卷 E1')
+    expect(describeQuizTool('list_past_exams', MESSAGES.en)).toBe('the past exams')
   })
 })
