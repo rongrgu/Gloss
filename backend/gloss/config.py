@@ -57,15 +57,23 @@ def seed_workspace(src: Path, dst: Path) -> None:
             shutil.copyfile(f, target)
 
 
+PURPOSES = ("outline", "explain", "qa", "digest", "quiz")  # outline = mind map + transcript alignment
+
+
 @dataclass
 class Config:
-    provider: str = "claude_cli"  # claude_cli (your Claude login) | anthropic_api (ANTHROPIC_API_KEY, `glossr[api]`)
-    model: str = "sonnet"
+    # claude | codex (your own CLI login and plan) | anthropic_api | openai_api (billed to the API key in
+    # ANTHROPIC_API_KEY / OPENAI_API_KEY). "claude_cli" is the old name for "claude". Also `[llm] provider`.
+    provider: str = "claude"
+    model: str = "sonnet"  # the default for every use; Claude aliases are ignored by codex / openai_api
+    models: dict[str, str] = field(default_factory=dict)  # `[llm.models]`: outline / explain / qa / digest / quiz
+    codex_auth: str = "login"  # codex: "login" (the CLI's saved login) | "api_key" (keep CODEX_API_KEY in the env)
     concurrency: int = 2  # global cap on simultaneous LLM calls
     language: str | None = None  # explanation / answer language; None follows the interface language (§9.3)
     workspace: Path = field(default_factory=default_workspace)
     library: Path = field(default_factory=lambda: Path.home() / "Gloss")  # where new .gloss files go
     claude_bin: str | None = None  # default: found on PATH
+    codex_bin: str | None = None  # provider "codex": the codex executable; default: found on PATH
     timeout: float = 600  # seconds per call
     qa_retrieval: bool = True  # answers may search the whole course (Grep/Read in the course folder)
     quiz_model: str | None = None  # model for pre-quiz generation (§13.5); None = `model`
@@ -79,6 +87,18 @@ class Config:
         if not path.exists():
             return cls()
         data = tomllib.loads(path.read_text())
+        llm = data.pop("llm", None)  # [llm] provider / codex_auth, [llm.models] per use (DESIGN.md §6)
+        if llm is not None:
+            if not isinstance(llm, dict) or set(llm) - {"provider", "models", "codex_auth"}:
+                raise ValueError(f"unknown keys in [llm] of {path}: {sorted(set(llm) - {'provider', 'models', 'codex_auth'})}")
+            for k in ("provider", "codex_auth"):
+                if llm.get(k):
+                    data[k] = llm[k]
+            models = llm.get("models") or {}
+            bad = set(models) - set(PURPOSES)
+            if bad:
+                raise ValueError(f"unknown [llm.models] keys in {path}: {sorted(bad)} (use {', '.join(PURPOSES)})")
+            data["models"] = {k: v for k, v in models.items() if v}
         known = {f.name for f in fields(cls)}
         unknown = set(data) - known
         if unknown:
@@ -87,3 +107,10 @@ class Config:
             if k in data:
                 data[k] = Path(data[k]).expanduser()
         return cls(**data)
+
+    def model_for(self, purpose: str) -> str | None:
+        """The model for one use (`[llm.models]`), or None for the provider's default (`model`).
+        `quiz_model` / `digest_model` are the older names for the quiz and digest entries."""
+        if self.models.get(purpose):
+            return self.models[purpose]
+        return {"quiz": self.quiz_model, "digest": self.digest_model}.get(purpose)

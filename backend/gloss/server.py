@@ -31,7 +31,8 @@ from .quiz import TYPES, QuizMaker, QuizStore
 from .digest import Digester, digest_dict
 from .profile import STATUSES as WP_STATUSES, ProfileError, ProfileStore, Profiler, on_mark, on_quiz_answer
 from .providers import LLMProvider
-from .providers.claude_cli import ClaudeCLIProvider, find_claude
+from .providers.claude_cli import find_claude
+from .providers.factory import make_provider
 from .store import Course, Message, Thread
 from .transcript import decode, segment
 from .tutor import Tutor
@@ -254,16 +255,6 @@ def message_dict(m: Message) -> dict[str, Any]:
 
 # --- app ---------------------------------------------------------------------------------
 
-def make_provider(config: Config) -> LLMProvider:
-    if config.provider == "claude_cli":
-        return ClaudeCLIProvider(config.workspace, model=config.model, claude_bin=config.claude_bin,
-                                 timeout=config.timeout)
-    if config.provider == "anthropic_api":
-        from .providers.anthropic_api import AnthropicAPIProvider
-        return AnthropicAPIProvider(config.model, timeout=config.timeout)
-    raise ValueError(f"unknown provider {config.provider!r} (claude_cli | anthropic_api)")
-
-
 def create_app(config: Config | None = None, provider: LLMProvider | None = None,
                static_dir: Path = STATIC_DIR) -> FastAPI:
     # Endpoints that touch `jobs` are `async def` so they run on the event loop
@@ -279,12 +270,13 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         return config.language or LANGUAGE_FOR[prefs.locale]
 
     tutor = Tutor(provider, jobs, config.workspace, language=claude_language(), retrieval=config.qa_retrieval,
+                  models={p: config.model_for(p) for p in ("outline", "explain", "qa")},
                   locale=prefs.locale)
     library = Library(config.library, app_dir() / "recent.json")
     folders = Folders(config.library)
-    quizzes = QuizMaker(tutor, config.library, model=config.quiz_model, verify=config.quiz_verify)
-    profiler = Profiler(tutor, config.library, model=config.digest_model)
-    digester = Digester(tutor, config.library, model=config.digest_model, profiler=profiler)
+    quizzes = QuizMaker(tutor, config.library, model=config.model_for("quiz"), verify=config.quiz_verify)
+    profiler = Profiler(tutor, config.library, model=config.model_for("digest"))
+    digester = Digester(tutor, config.library, model=config.model_for("digest"), profiler=profiler)
     if config.use_profile:
         tutor.weak_points = profiler.relevant
 
@@ -329,7 +321,7 @@ def create_app(config: Config | None = None, provider: LLMProvider | None = None
         if claude and time.monotonic() - auth_cache["at"] > 30:
             st = auth_status(claude)
             auth_cache.update(at=time.monotonic(), value=None if st is None else bool(st.get("loggedIn")))
-        return {"provider": config.provider, "model": config.model, "language": tutor.language,
+        return {"provider": provider.name, "model": config.model, "language": tutor.language,
                 "claude_found": bool(claude), "logged_in": auth_cache["value"] if claude else False}
 
     def prefs_dict() -> dict[str, Any]:

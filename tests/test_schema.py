@@ -165,3 +165,18 @@ def test_v2_file_migrates_to_v3_with_understood(tmp_path):
         assert t.understood is False and t.understood_at
         c.set_thread_understood("t1", None)
         assert c.get_thread("t1").understood is None and c.get_thread("t1").understood_at is None
+
+
+def test_v4_file_migrates_to_v5_sessions_belong_to_claude(tmp_path):
+    """§6: slide_sessions.claude_session_id -> provider_session_id, plus `provider` ('claude' for old rows)."""
+    p = tmp_path / "v4.gloss"
+    conn = sqlite3.connect(p, isolation_level=None)
+    schema.migrate(conn, schema.MIGRATIONS[:4])
+    conn.execute("INSERT INTO slide_sessions (page, claude_session_id, updated_at) VALUES (2, 'old-sid', 'then')")
+    conn.close()
+    with Course.open(p) as c:
+        assert int(c.get_meta("schema_version")) >= 5
+        assert c.get_session(2) == "old-sid" and c.get_session(2, "claude") == "old-sid"
+        assert c.get_session(2, "codex") is None  # can't resume another provider's session
+        c.set_session(2, "thread-1", "codex")
+        assert c.get_session(2, "codex") == "thread-1" and c.get_session(2, "claude") is None

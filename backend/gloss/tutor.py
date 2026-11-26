@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pymupdf
 
 from .jobs import Job, JobManager
-from .providers import (CourseToolSpec, Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef,
-                        TextDelta, ToolUse)
+from .providers import (CourseToolSpec, ErrorKind, LLMProvider, ProviderError, RunRequest, SessionNotFound,
+                        SessionRef)
+from .providers import context
+from .providers.schemas import parse_json
 from .store import Course, Message, Thread
 from . import i18n
 from . import transcript as tr
@@ -39,12 +44,24 @@ TREE_SCHEMA = {
     },
     "required": ["title", "children"],
 }
+log = logging.getLogger(__name__)
 SLIDE_TEXT_LIMIT = 1500  # chars per slide sent for tree building
 COVER_FRACTION = 0.3  # a text block counts as selected if this much of it is inside the rect
 
 
 # Variables that are a whole optional section: empty means the section is absent, not "（无）".
 OPTIONAL = {"weak_points"}
+
+
+@dataclass
+class Result:
+    """The outcome of one provider call (`Tutor._stream`)."""
+    text: str
+    session_id: str | None = None
+    model: str | None = None
+    data: Any = None
+    cost_usd: float | None = None
+    usage: dict | None = None
 
 
 class Prompts:
@@ -158,8 +175,9 @@ class Scratch:
 
 class Tutor:
     def __init__(self, provider: LLMProvider, jobs: JobManager, workspace: Path, language: str = "中文",
-                 retrieval: bool = True, locale: str = i18n.DEFAULT_LOCALE):
+                 retrieval: bool = True, locale: str = i18n.DEFAULT_LOCALE, models: dict[str, str | None] | None = None):
         self.provider = provider
+        self.models = models or {}  # per use (config `[llm.models]`): outline / explain / qa; None = provider default
         self.jobs = jobs
         self.workspace = Path(workspace)
         self.prompts = Prompts(workspace)
@@ -196,7 +214,7 @@ class Tutor:
             )
             scratch = Scratch(self.workspace, course)
             done = await self._stream(job, prompt, [scratch.slide(page)], session=None, system=self.prompts.role(),
-                                      cwd=scratch.dir)
+                                      cwd=scratch.dir, model=self.models.get("explain"))
             e = course.add_explanation(page, done.text, done.model)
             job.emit({"type": "done", "explanation": {"page": page, "content": e.content, "model": e.model,
                                                       "created_at": e.created_at}})
@@ -221,7 +239,7 @@ class Tutor:
             for attempt in range(2):
                 prompt = self.prompts.render("build-tree", **values, feedback=feedback)
                 done = await self._stream(job, prompt, [], session=None, system=self.prompts.role(),
-                                          json_schema=TREE_SCHEMA, cwd=self._dir(course))
+                                          json_schema=TREE_SCHEMA, cwd=self._dir(course), model=self.models.get("outline"))
                 problems = tree_problems(done.data, n)
                 if not problems:
                     break
@@ -257,7 +275,7 @@ class Tutor:
             for _ in range(2):
                 prompt = self.prompts.render("align-transcript", **values, feedback=feedback)
                 done = await self._stream(job, prompt, [], session=None, system=self.prompts.role(),
-                                          json_schema=tr.ALIGN_SCHEMA, cwd=self._dir(course))
+                                          json_schema=tr.ALIGN_SCHEMA, cwd=self._dir(course), model=self.models.get("outline"))
                 problems = tr.alignment_problems(done.data, n, len(segs))
                 if not problems:
                     break
@@ -327,37 +345,38 @@ class Tutor:
             scratch = Scratch(self.workspace, course)
             if self.retrieval:
                 scratch.materials()
-            qa = dict(cwd=scratch.dir, tools=("Read", "Grep", "Glob") if self.retrieval else ("Read",))
+            qa = dict(cwd=scratch.dir, tools=("Read", "Grep", "Glob") if self.retrieval else ("Read",),
+                      model=self.models.get("qa"))
             first_ids = _first_user_message_ids(course, page)
             is_new = msg.id in first_ids
             current = self._tagged(course, thread, msg, is_new)
             current_images = [p for p in [scratch.crop(thread)] if is_new and p]
 
             done = None
-            sid = course.get_session(page)
+            sid = course.get_session(page, self.provider.name)
             if sid:
                 try:
                     # The session's system prompt fixed a language when it was opened; restate it in
                     # case the interface language changed since (§9.3). Not stored, not in the drawer.
                     resumed = f"{current}\n\n（用{self.language}回答。）"
-                    done = await self._stream(job, resumed, current_images, SessionRef(sid, new=False), None, **qa)
+                    done = await self._stream(job, "", [], SessionRef(sid, new=False), None,
+                                              parts=context.qa_resume(resumed, current_images), **qa)
                 except SessionNotFound:
                     job.emit({"type": "reset"})  # rebuild below
             if done is None:
                 ref = SessionRef(str(uuid.uuid4()), new=True)
-                prompt = self._opening(course, page) + "\n\n"
                 history = [(t, m) for t, m in course.page_history(page) if m.id < msg.id]
-                if history:
-                    prompt += self.prompts.render("qa-rebuild", history=self._history(course, history, first_ids))
-                    prompt += "\n\n"
-                prompt += current
+                parts = context.qa_session(scratch.slide(page), self._opening(course, page),
+                                           self._rebuild(course, history, first_ids) if history else None,
+                                           current, current_images)
                 system = self.prompts.role() + "\n\n" + self.prompts.render("qa-system", language=self.language)
                 if self.retrieval:
                     system += "\n\n" + self.prompts.render("qa-retrieval", page_count=course.slide_count())
-                done = await self._stream(job, prompt, [scratch.slide(page), *current_images], ref, system, **qa)
-                done.session_id = done.session_id or ref.id
+                done = await self._stream(job, "", [], ref, system, parts=parts, **qa)
 
-            course.set_session(page, done.session_id)
+            # API providers have no sessions (their "session" is the stored history): nothing to keep.
+            keep = getattr(getattr(self.provider, "caps", None), "supports_sessions", True)
+            course.set_session(page, done.session_id if keep else None, self.provider.name)
             answer = course.add_message(thread.id, "assistant", done.text)
             job.emit({"type": "done", "message": _message_dict(answer)})
 
@@ -391,13 +410,25 @@ class Tutor:
         )
 
     def _history(self, course: Course, history: list[tuple[Thread, Message]], first_ids: set[int]) -> str:
+        return "\n\n".join(self._history_entries(course, history, first_ids))
+
+    def _history_entries(self, course: Course, history: list[tuple[Thread, Message]], first_ids: set[int]) -> list[str]:
         out = []
         for t, m in history:
             if m.role == "user":
                 out.append(f"学生：{self._tagged(course, t, m, m.id in first_ids)}")
             else:
                 out.append(f"助教（Thread #{t.n}）：{m.content}")
-        return "\n\n".join(out)
+        return out
+
+    _SPLIT = "\x00HISTORY\x00"
+
+    def _rebuild(self, course: Course, history: list[tuple[Thread, Message]],
+                 first_ids: set[int]) -> tuple[str, list[str], str]:
+        """qa-rebuild.md around the earlier messages, as (heading, entries, closing) for context.qa_session.
+        Joined with blank lines it is exactly the rendered template."""
+        pre, post = self.prompts.render("qa-rebuild", history=self._SPLIT).split(self._SPLIT)
+        return pre.rstrip("\n"), self._history_entries(course, history, first_ids), post.lstrip("\n")
 
     def session_log(self, course: Course, page: int) -> dict[str, Any]:
         """What this page's session contains, as tagged messages (the debug drawer, §9)."""
@@ -421,23 +452,65 @@ class Tutor:
     async def _stream(self, job: Job, prompt: str, images: list[Path], session: SessionRef | None,
                       system: str | None, json_schema: dict | None = None, cwd: Path | None = None,
                       tools: tuple[str, ...] = ("Read",), course_tools: CourseToolSpec | None = None,
-                      model: str | None = None) -> Done:
-        kw: dict[str, Any] = {"cwd": cwd, "tools": tools}
-        if json_schema is not None:
-            kw["json_schema"] = json_schema
-        if course_tools is not None:
-            kw["course_tools"] = course_tools
-        if model:
-            kw["model"] = model
-        async for ev in self.provider.run(prompt, images=images, session=session, system=system, **kw):
-            if isinstance(ev, ToolUse):
-                job.emit({"type": "tool", "name": ev.name, "target": tool_target(ev.name, ev.input)})
-            elif isinstance(ev, TextDelta):
+                      model: str | None = None, parts: list[context.Part] | None = None) -> Result:
+        """One provider call, its events turned into job events (§6).
+
+        `session`: None = a one-off call; `SessionRef(_, new=True)` = start a session to resume later;
+        `SessionRef(id, new=False)` = resume it. The provider names the session (`Result.session_id`).
+        Providers that only send whole messages (text_final) show up as one delta per message.
+        `parts` (context.py) replaces `prompt` + `images` with the structured, cache-friendly form.
+        """
+        if parts is not None:
+            prompt, images = context.flatten(parts)
+        else:
+            parts = context.text_only(prompt, images)
+        enforced = json_schema is not None and getattr(getattr(self.provider, "caps", None), "supports_output_schema", True)
+        if json_schema is not None and not enforced:
+            # The provider can't enforce a schema: ask for it in the prompt and parse the answer. The callers'
+            # own checks (tree_problems, quiz_problems, …) and their retry cover what the model gets wrong.
+            ask = ("只输出一个符合下面 JSON Schema 的 JSON 对象，不要输出任何别的文字：\n```json\n"
+                   + json.dumps(json_schema, ensure_ascii=False) + "\n```")
+            prompt += "\n\n" + ask
+            parts = [*parts, context.Part(text=ask)]
+        req = RunRequest(prompt, images=list(images), system=system, cwd=cwd, tools=tuple(tools),
+                         output_schema=json_schema if enforced else None, course_tools=course_tools,
+                         model=model or None, persist=session is not None, parts=parts,
+                         session_id=session.id if session is not None and not session.new else None)
+        text, closed, sid, usage = "", False, None, None
+        async for ev in self.provider.run(req):
+            if ev.kind == "session":
+                sid = ev.session_id
+            elif ev.kind == "text_delta":
+                if closed:  # a new message after a preamble (before a tool call): start over
+                    job.emit({"type": "reset"})
+                    text, closed = "", False
+                text += ev.text
                 job.emit({"type": "delta", "text": ev.text})
-            elif isinstance(ev, Reset):
-                job.emit({"type": "reset"})
-            elif isinstance(ev, Done):
-                return ev
+            elif ev.kind == "text_final":
+                if ev.text != text:  # not streamed (or streamed differently): show it whole
+                    if text:
+                        job.emit({"type": "reset"})
+                    job.emit({"type": "delta", "text": ev.text})
+                    text = ev.text
+                closed = True
+            elif ev.kind == "tool":
+                job.emit({"type": "tool", "name": ev.name, "target": tool_target(ev.name, ev.data or {})})
+            elif ev.kind == "usage":
+                usage = ev.data
+                log.info("usage %s: %s", self.provider.name, ev.data)
+            elif ev.kind == "error":
+                if ev.error_kind == ErrorKind.SESSION_INVALID:
+                    raise SessionNotFound(ev.text)
+                raise ProviderError(ev.text, ev.error_kind or ErrorKind.UNKNOWN)
+            elif ev.kind == "done":
+                data = ev.data
+                if json_schema is not None and not enforced:
+                    try:
+                        data = parse_json(ev.text or text)
+                    except ValueError:
+                        data = None  # the caller's check reports it and retries
+                return Result(text=ev.text or text, session_id=ev.session_id or sid, model=ev.model,
+                              data=data, cost_usd=ev.cost_usd, usage=usage)
         raise ProviderError("provider ended without a result")
 
 

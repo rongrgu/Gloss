@@ -1,6 +1,6 @@
 [project]
 name = "glossr"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ask questions right on your lecture slides. A local study app powered by your own Claude."
 readme = "README.md"
 license = "MIT"
@@ -33,7 +33,14 @@ gloss = "gloss.cli:main"
 glossr = "gloss.cli:main"
 
 [project.optional-dependencies]
-api = [
+# API providers (DESIGN.md §6); the CLI providers need neither.
+anthropic = [
+    "anthropic>=1.13.0",
+]
+openai = [
+    "openai>=2.0",
+]
+api = [  # the name before there were two API providers
     "anthropic>=1.13.0",
 ]
 

@@ -1,12 +1,8 @@
 # Copy to config.toml (not committed) and edit.
 
-# claude_cli: uses your logged-in `claude` CLI and your subscription quota.
-# anthropic_api: calls the Anthropic API directly and bills the key in ANTHROPIC_API_KEY.
-#   Needs `pip install 'glossr[api]'` (or `uv sync --extra api`). No whole-course search with this
-#   provider, and every follow-up resends the slide's history (prompt caching keeps that cheap).
-provider = "claude_cli"
-
-# Alias or full model name, passed to `claude --model`. Pro users may prefer "haiku" or "sonnet".
+# Model for everything, unless [llm.models] below picks one per use. For claude: an alias ("haiku",
+# "sonnet", "opus") or a full name; Pro users may prefer "haiku" or "sonnet". codex ignores Claude
+# aliases and uses its own default; openai_api falls back to "gpt-5.5".
 model = "sonnet"
 
 # How many Claude calls may run at once (different slides). Calls on the same slide always queue.
@@ -41,3 +37,29 @@ use_profile = true
 
 # Path to the claude executable, if it is not on PATH.
 # claude_bin = "/usr/local/bin/claude"
+# Path to the codex executable (provider "codex"), if it is not on PATH.
+# codex_bin = "/usr/local/bin/codex"
+
+# --- Which LLM answers (DESIGN.md §6) -------------------------------------------------------
+[llm]
+# claude:        your logged-in Claude Code (`claude`), counted against your Claude plan.
+# codex:         your logged-in OpenAI Codex CLI (`codex`), counted against your ChatGPT / Codex plan.
+#                Not yet tested against a real Codex; see DESIGN.md §6.
+# anthropic_api: the Anthropic API, billed per token to the key in ANTHROPIC_API_KEY
+#                (`pip install 'glossr[anthropic]'`).
+# openai_api:    the OpenAI API, billed per token to the key in OPENAI_API_KEY
+#                (`pip install 'glossr[openai]'`).
+# The API providers can't search the rest of the course or make pre-quizzes (no tools), and they
+# resend the slide's history with every question (prompt caching keeps the repeated part cheap).
+# API keys are read from the environment only: never put them in this file.
+provider = "claude"
+# codex only: "login" uses the CLI's own login (default); "api_key" lets codex bill CODEX_API_KEY.
+# codex_auth = "login"
+
+# Optional: a model per use. Empty means `model` above (or the provider's default).
+[llm.models]
+outline = ""   # mind map and transcript alignment
+explain = ""   # slide explanations
+qa = ""        # questions and follow-ups
+digest = ""    # lecture summaries and study-profile updates (older name: digest_model)
+quiz = ""      # pre-quiz generation and checking (older name: quiz_model)

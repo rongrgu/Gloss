@@ -7,8 +7,9 @@ import anthropic
 import httpx2
 import pytest
 
-from gloss.providers import Done, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta
+from gloss.providers import ErrorKind, ProviderError, RunRequest, SessionRef
 from gloss.providers.anthropic_api import AnthropicAPIProvider, resolve_model, strict_schema
+from gloss.providers.context import Part, qa_session
 
 
 def ev(type_, **kw):
@@ -67,10 +68,17 @@ def final(*blocks, stop="end_turn", model="claude-sonnet-5-5"):
     return types.SimpleNamespace(content=list(blocks), stop_reason=stop, model=model, stop_details=None)
 
 
-def collect(provider, prompt="hi", **kw):
+def collect(provider, prompt="hi", session=None, json_schema=None, **kw):
+    req = RunRequest(prompt, persist=session is not None, output_schema=json_schema,
+                     session_id=session.id if session is not None and not session.new else None, **kw)
+
     async def go():
-        return [e async for e in provider.run(prompt, **kw)]
+        return [e async for e in provider.run(req)]
     return asyncio.run(go())
+
+
+def kinds(evs):
+    return [(e.kind, e.text) for e in evs]
 
 
 @pytest.fixture
@@ -91,17 +99,41 @@ def test_stream_images_caching_and_fallbacks(api, tmp_path):
     img.write_bytes(b"\x89PNG fake")
     crop = tmp_path / "crop-x.png"
     crop.write_bytes(b"\x89PNG crop")
-    client.next = FakeStream([delta("你"), delta("好")], final(block("text", text="你好")))
-    evs = collect(p, "问题", images=[img, crop], session=SessionRef("s1", new=True), system="助教")
-    assert evs == [TextDelta("你"), TextDelta("好"), Done("你好", "s1", "claude-sonnet-5-5", None, None)]
+    f = final(block("text", text="你好"))
+    f.usage = types.SimpleNamespace(input_tokens=40, output_tokens=2, cache_read_input_tokens=1800,
+                                    cache_creation_input_tokens=60)
+    client.next = FakeStream([delta("你"), delta("好")], f)
+    parts = qa_session(img, "OPENING", ("HEAD", ["学生：q1", "助教（Thread #1）：a1"], "## 现在的消息"), "问题", [crop])
+    evs = collect(p, "问题", system="助教", parts=parts)
+    assert kinds(evs) == [("text_delta", "你"), ("text_delta", "好"), ("usage", ""), ("done", "你好")]
+    assert evs[2].data == {"input_tokens": 40, "output_tokens": 2, "cache_read_tokens": 1800, "cache_write_tokens": 60}
+    assert evs[-1].model == "claude-sonnet-5-5" and evs[-1].session_id is None  # the API has no sessions
     used_beta, req = client.requests[0]
     assert used_beta and req["betas"] == ["server-side-fallback-2026-07-01"] and req["fallbacks"] == "default"
     assert req["model"] == "claude-sonnet-5-5" and req["max_tokens"] == 64000
     assert req["system"] == [{"type": "text", "text": "助教", "cache_control": {"type": "ephemeral"}}]
     content = req["messages"][0]["content"]
-    assert [b["type"] for b in content] == ["image", "image", "text"]
-    assert content[0]["cache_control"] == {"type": "ephemeral"} and "cache_control" not in content[1]
-    assert content[0]["source"]["media_type"] == "image/png" and content[2]["text"] == "问题"
+    assert [b["type"] for b in content] == ["image", "text", "text", "text", "text", "text", "image"]
+    assert [b.get("text") for b in content[1:6]] == ["OPENING", "HEAD", "学生：q1", "助教（Thread #1）：a1", "## 现在的消息\n\n问题"]
+    # breakpoints: system + end of the opening + end of the earlier Q&A (stable prefix); never the new question
+    assert [i for i, b in enumerate(content) if "cache_control" in b] == [1, 4]
+    assert content[0]["source"]["media_type"] == "image/png"
+
+
+def test_prefix_is_byte_identical_and_breakpoints_capped(api, tmp_path):
+    import json
+    p, client = api
+    img = tmp_path / "page-2.png"
+    img.write_bytes(b"\x89PNG fake")
+    for _ in range(2):
+        client.next = FakeStream([], final(block("text", text="ok")))
+        collect(p, "q", system="s", parts=qa_session(img, "O", ("H", ["e1"], "C"), "q", []))
+    a, b = (json.dumps(r[1], ensure_ascii=False, sort_keys=True) for r in client.requests)
+    assert a == b  # same input, same bytes: nothing time- or order-dependent
+    many = [Part(text=str(i), cache=True) for i in range(6)]
+    req = p.build_request(many, "sys", None)
+    marked = [b["text"] for b in req["messages"][0]["content"] if "cache_control" in b]
+    assert marked == ["3", "4", "5"]  # 3 + the system prompt = the API's limit of 4
 
 
 def test_haiku_has_no_fallbacks():
@@ -115,8 +147,7 @@ def test_haiku_has_no_fallbacks():
 
 def test_resume_always_rebuilds(api):
     p, _ = api
-    with pytest.raises(SessionNotFound):
-        collect(p, session=SessionRef("old", new=False))
+    assert collect(p, session=SessionRef("old", new=False))[-1].error_kind == ErrorKind.SESSION_INVALID
 
 
 def test_structured_output(api):
@@ -139,7 +170,7 @@ def test_fallback_mid_stream_resets_and_keeps_final_text(api):
     events = [delta("部分"), ev("content_block_start", content_block=block("fallback")), delta("完整回答")]
     client.next = FakeStream(events, final(block("text", text="部分"), block("fallback"), block("text", text="完整回答")))
     evs = collect(p)
-    assert evs == [TextDelta("部分"), Reset(), TextDelta("完整回答"), Done("完整回答", None, "claude-sonnet-5-5", None, None)]
+    assert kinds(evs) == [("text_delta", "部分"), ("text_final", "部分"), ("text_delta", "完整回答"), ("done", "完整回答")]
 
 
 def test_refusal(api):
@@ -147,8 +178,8 @@ def test_refusal(api):
     f = final(stop="refusal")
     f.stop_details = types.SimpleNamespace(category="cyber")
     client.next = FakeStream([], f)
-    with pytest.raises(ProviderError, match="declined.*cyber"):
-        collect(p)
+    e = collect(p)[-1]
+    assert e.kind == "error" and "declined" in e.text and "cyber" in e.text
 
 
 def _status_error(cls, status):
@@ -156,18 +187,18 @@ def _status_error(cls, status):
     return cls("boom", response=httpx2.Response(status, request=req), body=None)
 
 
-@pytest.mark.parametrize("err, msg", [
-    (lambda: _status_error(anthropic.AuthenticationError, 401), "invalid API key"),
-    (lambda: _status_error(anthropic.RateLimitError, 429), "rate limited"),
-    (lambda: _status_error(anthropic.InternalServerError, 529), "temporarily unavailable"),
-    (lambda: _status_error(anthropic.BadRequestError, 400), "API error \\(400\\)"),
-    (lambda: anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")), "cannot reach"),
+@pytest.mark.parametrize("err, msg, kind", [
+    (lambda: _status_error(anthropic.AuthenticationError, 401), "invalid API key", ErrorKind.NOT_LOGGED_IN),
+    (lambda: _status_error(anthropic.RateLimitError, 429), "rate limited", ErrorKind.QUOTA_EXCEEDED),
+    (lambda: _status_error(anthropic.InternalServerError, 529), "temporarily unavailable", ErrorKind.UNKNOWN),
+    (lambda: _status_error(anthropic.BadRequestError, 400), "API error (400)", ErrorKind.UNKNOWN),
+    (lambda: anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")), "cannot reach", ErrorKind.UNKNOWN),
 ])
-def test_errors(api, err, msg):
+def test_errors(api, err, msg, kind):
     p, client = api
     client.next = FakeStream([], None, error=err())
-    with pytest.raises(ProviderError, match=msg):
-        collect(p)
+    e = collect(p)[-1]
+    assert e.kind == "error" and msg in e.text and e.error_kind == kind
 
 
 def test_missing_key(monkeypatch):
@@ -184,3 +215,22 @@ def test_tutor_disables_retrieval_without_tools(tmp_path):
         return Tutor(AnthropicAPIProvider("sonnet", client=FakeClient()), JobManager(), tmp_path).retrieval
 
     assert asyncio.run(go()) is False
+
+
+def test_closing_early_closes_the_sdk_stream(api):
+    """Cancelling (the job goes away) must end the HTTP stream, not keep generating tokens."""
+    p, client = api
+    exited = []
+
+    class Tracked(FakeStream):  # `async with` looks __aexit__ up on the class
+        async def __aexit__(self, *exc):
+            exited.append(True)
+            return False
+    client.next = Tracked([delta("a"), delta("b"), delta("c")], final(block("text", text="abc")))
+
+    async def go():
+        gen = p.run(RunRequest("q"))
+        first = await gen.__anext__()
+        await gen.aclose()
+        return first
+    assert asyncio.run(go()).text == "a" and exited == [True]

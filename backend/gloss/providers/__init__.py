@@ -1,4 +1,5 @@
-from .base import CourseToolSpec, Done, LLMProvider, ProviderError, Reset, SessionNotFound, SessionRef, TextDelta, ToolUse
+from .base import (Capabilities, CourseToolSpec, ErrorKind, Event, LLMProvider, ProviderError, RunRequest,
+                   SessionNotFound, SessionRef)
 
-__all__ = ["CourseToolSpec", "Done", "LLMProvider", "ProviderError", "Reset", "SessionNotFound", "SessionRef",
-           "TextDelta", "ToolUse"]
+__all__ = ["Capabilities", "CourseToolSpec", "ErrorKind", "Event", "LLMProvider", "ProviderError", "RunRequest",
+           "SessionNotFound", "SessionRef"]

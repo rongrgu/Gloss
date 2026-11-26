@@ -67,7 +67,15 @@ def _v3_to_v4(conn: sqlite3.Connection) -> None:
                  "up_to_message_id INTEGER, model TEXT, created_at TEXT)")
 
 
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1, _v1_to_v2, _v2_to_v3, _v3_to_v4]
+def _v4_to_v5(conn: sqlite3.Connection) -> None:
+    # Provider-neutral sessions (§6): a page session belongs to the provider that created it (claude / codex).
+    # Every session so far came from claude -p.
+    conn.execute("ALTER TABLE slide_sessions RENAME COLUMN claude_session_id TO provider_session_id")
+    conn.execute("ALTER TABLE slide_sessions ADD COLUMN provider TEXT")
+    conn.execute("UPDATE slide_sessions SET provider = 'claude'")
+
+
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_v0_to_v1, _v1_to_v2, _v2_to_v3, _v3_to_v4, _v4_to_v5]
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

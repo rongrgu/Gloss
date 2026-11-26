@@ -256,9 +256,9 @@ def test_question_on_explanation_text(setup):
 # --- whole-course retrieval (M6) -------------------------------------------------
 
 def test_qa_runs_in_course_folder_with_search_tools(setup):
-    from gloss.providers import ToolUse
-    fp = FakeProvider(reply="见第 3 页。", tool_calls=[ToolUse("Grep", {"pattern": "Multi-head"}),
-                                                       ToolUse("Read", {"file_path": "/w/page-3.png"})])
+    from gloss.providers import Event
+    fp = FakeProvider(reply="见第 3 页。", tool_calls=[Event("tool", name="Grep", data={"pattern": "Multi-head"}),
+                                                       Event("tool", name="Read", data={"file_path": "/w/page-3.png"})])
 
     async def steps(tutor, course):
         course.set_transcript_spans({3: "老师：多头就是并行做 h 次。"})
@@ -322,3 +322,40 @@ def test_course_md_rewritten_only_on_change(setup):
 def test_tool_target(name, inp, out):
     from gloss.tutor import tool_target
     assert tool_target(name, inp) == out
+
+
+def test_switching_provider_rebuilds_instead_of_resuming(setup):
+    """§6: a session belongs to the provider that made it. After switching, the next follow-up rebuilds."""
+    a, b = FakeProvider(reply="A", name="claude"), FakeProvider(reply="B", name="codex")
+    course, ws = setup
+
+    async def go():
+        t1, _, j = Tutor(a, JobManager(2), ws).ask(course, 2, (0, 0, 0.5, 0.5), "q1")
+        await finish(j)
+        claude_sid = course.get_session(2, "claude")
+        _, j = Tutor(b, JobManager(2), ws).follow_up(course, t1.id, "again")
+        await finish(j)
+        return claude_sid
+
+    claude_sid = asyncio.run(go())
+    switched = b.calls[-1]
+    assert claude_sid and switched.session.new and "之前的问答记录" in switched.prompt  # rebuilt, not resumed
+    assert course.get_session(2, "codex") == switched.session.id and course.get_session(2, "claude") is None
+
+
+def test_sessionless_provider_stores_no_session(setup):
+    """API providers (§6): no session id is kept; every question rebuilds from the stored history."""
+    from gloss.providers import Capabilities
+    api = FakeProvider(reply="A", name="anthropic_api")
+    api.caps = Capabilities(True, True, True, True, supports_tools=False, supports_sessions=False)
+    course, ws = setup
+
+    async def go():
+        t1, _, j = Tutor(api, JobManager(2), ws).ask(course, 2, (0, 0, 0.5, 0.5), "q1")
+        await finish(j)
+        _, j = Tutor(api, JobManager(2), ws).follow_up(course, t1.id, "again")
+        await finish(j)
+
+    asyncio.run(go())
+    assert course.get_session(2) is None
+    assert api.calls[1].session.new and "之前的问答记录" in api.calls[1].prompt

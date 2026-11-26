@@ -299,20 +299,24 @@ class Course:
 
     # --- slide sessions (Claude session cache, §7) -------------------------
 
-    def get_session(self, page: int) -> str | None:
-        row = self._one("SELECT claude_session_id FROM slide_sessions WHERE page = ?", (page,))
-        return row[0] if row else None
+    def get_session(self, page: int, provider: str | None = None) -> str | None:
+        """The page's provider session id. With `provider`, only a session that provider created: ids from
+        another provider can't be resumed, so the caller rebuilds the context instead (§6, §7.4)."""
+        row = self._one("SELECT provider_session_id, provider FROM slide_sessions WHERE page = ?", (page,))
+        if not row or (provider is not None and row[1] != provider):
+            return None
+        return row[0]
 
-    def set_session(self, page: int, session_id: str | None) -> None:
+    def set_session(self, page: int, session_id: str | None, provider: str | None = None) -> None:
         with self._tx() as c:
             if session_id is None:
                 c.execute("DELETE FROM slide_sessions WHERE page = ?", (page,))
             else:
                 c.execute(
-                    "INSERT INTO slide_sessions (page, claude_session_id, updated_at) VALUES (?, ?, ?) "
-                    "ON CONFLICT (page) DO UPDATE SET claude_session_id = excluded.claude_session_id, "
-                    "updated_at = excluded.updated_at",
-                    (page, session_id, now()),
+                    "INSERT INTO slide_sessions (page, provider_session_id, provider, updated_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (page) DO UPDATE SET provider_session_id = excluded.provider_session_id, "
+                    "provider = excluded.provider, updated_at = excluded.updated_at",
+                    (page, session_id, provider, now()),
                 )
 
     # --- threads & messages ------------------------------------------------

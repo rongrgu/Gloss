@@ -92,21 +92,36 @@ Copy `config.example.toml` to `config.toml` (in the repo; or `~/.gloss/config.to
 
 | key | default | meaning |
 |---|---|---|
-| `model` | `"sonnet"` | passed to `claude --model` — an alias (`haiku`, `sonnet`, `opus`) or a full model name |
+| `model` | `"sonnet"` | the model for everything — for `claude` an alias (`haiku`, `sonnet`, `opus`) or a full name. `codex` ignores Claude aliases and uses its own default; `openai_api` then uses `gpt-5.5` |
 | `language` | (unset) | language for explanations, answers and the mind map. Unset, it follows the interface language (English by default; switch with the 中文 / EN button in the top bar). Set it to pin one, e.g. `"中文"` |
 | `concurrency` | `2` | how many Claude calls may run at once (different slides) |
 | `qa_retrieval` | `true` | let answers search the rest of the course when a question needs it |
-| `quiz_model` | (unset) | model for pre-quiz generation; unset uses `model` |
+| `quiz_model` | (unset) | model for pre-quiz generation; unset uses `model` (newer form: `[llm.models] quiz`) |
 | `quiz_verify` | `true` | check every pre-quiz answer key against the slides with a second call |
-| `digest_model` | (unset) | model for lecture summaries and study-profile updates; unset uses `model` |
+| `digest_model` | (unset) | model for lecture summaries and study-profile updates; unset uses `model` (newer form: `[llm.models] digest`) |
 | `use_profile` | `true` | mention relevant weak points from the study profile in new explanations and question sessions |
-| `provider` | `"claude_cli"` | `"claude_cli"` (your Claude Code login) or `"anthropic_api"` (see below) |
+| `[llm] provider` | `"claude"` | which LLM answers: `claude`, `codex`, `anthropic_api` or `openai_api` (see below). The older top-level `provider = "claude_cli"` still works |
+| `[llm.models]` | (empty) | a model per use: `outline` (mind map, transcript alignment), `explain`, `qa`, `digest`, `quiz`; empty uses `model` |
 | `library` | `~/Gloss` | where imported courses are saved |
-| `claude_bin` | found on `PATH` | path to the `claude` executable |
+| `claude_bin` / `codex_bin` | found on `PATH` | path to the `claude` / `codex` executable |
 
-### Using an API key instead
+### Choosing the LLM: your CLI login, or an API key
 
-Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv tool install 'glossr[api]'`, `pip install 'glossr[api]'`, or `uv sync --extra api` in a clone), and export `ANTHROPIC_API_KEY`. Calls are then billed to that key at API rates instead of counting toward your Claude plan; `gloss doctor` checks the setup. Differences: answers can't search the rest of the course and pre-quizzes aren't available (both need tools, which this route doesn't have), and every follow-up resends the slide's earlier questions and answers (prompt caching keeps the repeated part cheap). On models that support it, Gloss turns on Anthropic's server-side refusal fallback, so a request one model declines is retried on another automatically.
+Gloss can talk to four backends. Set `provider` under `[llm]` in `config.toml`; `gloss doctor` checks the one you chose (`--live` sends a tiny test prompt).
+
+| `provider` | what it uses | who pays |
+|---|---|---|
+| `claude` (default) | your logged-in Claude Code (`claude`) | your Claude plan |
+| `codex` | your logged-in OpenAI Codex CLI (`codex`; run `codex login` first) | your ChatGPT / Codex plan |
+| `anthropic_api` | the Anthropic API (`pip install 'glossr[anthropic]'`) | per token, the key in `ANTHROPIC_API_KEY` |
+| `openai_api` | the OpenAI API (`pip install 'glossr[openai]'`) | per token, the key in `OPENAI_API_KEY` |
+
+- **CLIs use your own account and plan.** Gloss runs the CLI on your machine; it never sees your login. If `ANTHROPIC_API_KEY` (for `claude`) or `OPENAI_API_KEY` / `CODEX_API_KEY` (for `codex`) is set, Gloss removes it when calling the CLI so your plan is used, not the key (for codex, `codex_auth = "api_key"` under `[llm]` opts into the key).
+- **API keys are read from the environment only** — never from `config.toml`, never written to logs, `.gloss` files or exports.
+- **Both CLIs run read-only.** The model can read the course's own working folder and nothing else is ever written by it; Gloss writes everything itself after checking it.
+- **The `codex` provider has not yet been tested against a real Codex CLI**; its flags follow Codex's documentation and source (DESIGN.md §6 lists what still needs checking).
+- **API providers differ in two ways:** they can't search the rest of the course or make pre-quizzes (both need tools), and every question resends the slide and its earlier Q&A. Gloss orders that context so the repeated part is served from the providers' prompt cache. With `anthropic_api`, models that support it get Anthropic's server-side refusal fallback. With `openai_api`, the default model is `gpt-5.5`; set `model` (or `[llm.models]`) to choose another.
+- **Switching provider** keeps everything: a page's questions continue with the new provider, which is given the earlier Q&A on that page.
 
 **Changing how Claude explains things:** the prompts are plain Markdown in `claude_workspace/` (`CLAUDE.md` for the tutor's role, `prompts/*.md` for each task). Edit them to change the style, for example exam-focused or more concise. Changes apply to new explanations and to new question sessions.
 
@@ -114,7 +129,7 @@ Set `provider = "anthropic_api"` in `config.toml`, install the extra (`uv tool i
 
 Start with `uv run gloss doctor`.
 
-- **"claude not found"** — install Claude Code, or set `claude_bin` in `config.toml`.
+- **"claude not found"** / **"codex not found"** — install the CLI, or set `claude_bin` / `codex_bin` in `config.toml`.
 - **"not logged in"** — run `claude` in a terminal and use `/login`.
 - **An answer failed** — the question is kept; press 重试 (retry). Common causes are usage limits or a network problem; the error message comes from Claude Code.
 - **Port in use** — Gloss picks the next free port automatically, or pass `--port`.
