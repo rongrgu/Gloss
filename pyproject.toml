@@ -1,6 +1,6 @@
 [project]
 name = "glossr"
-version = "0.3.0"
+version = "0.3.1"
 description = "Ask questions right on your lecture slides. A local study app powered by your own Claude."
 readme = "README.md"
 license = "MIT"

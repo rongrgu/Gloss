@@ -12,6 +12,7 @@ import { LayoutMenu } from './LayoutMenu'
 import { Markdown } from './Markdown'
 import { go } from './route'
 import { asSel, Stage, titleOf, type Sel } from './Stage'
+import { useSwipePages } from './swipe'
 import { useToast } from './toast'
 import { useSlide, type ExplainState } from './useSlide'
 
@@ -109,6 +110,10 @@ export default function Workspace({ course, page, thread, onCourseChanged }: {
   const goPage = useCallback((p: number) => {
     if (p >= 1 && p <= pageCount) go({ name: 'slide', cid, page: p })
   }, [cid, pageCount])
+
+  // Two-finger horizontal swipe over the slide turns the page (§9.1)
+  const onSwipe = useCallback((dir: 'next' | 'prev') => goPage(page + (dir === 'next' ? 1 : -1)), [goPage, page])
+  useSwipePages(paneRef, stageRef, onSwipe)
 
   const front = (tid: string) => setZ((cur) => ({ top: cur.top + 1, of: { ...cur.of, [tid]: cur.top + 1 } }))
 
